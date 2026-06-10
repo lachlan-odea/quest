@@ -35,10 +35,14 @@ import AdminXP from '@/pages/admin/AdminXP';
 import AdminBattles from '@/pages/admin/AdminBattles';
 import AdminSettings from '@/pages/admin/AdminSettings';
 
+// Router basename derived from Vite's base (e.g. "/quest/" -> "/quest").
+// Lets the same build run at site root or under a GitHub Pages subpath.
+const basename = import.meta.env.BASE_URL.replace(/\/$/, '');
+
 export default function App() {
   return (
     <GameProvider>
-      <BrowserRouter>
+      <BrowserRouter basename={basename}>
         <Routes>
           {/* Public */}
           <Route path="/" element={<LandingPage />} />

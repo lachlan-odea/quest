@@ -20,7 +20,7 @@ export default function LandingPage() {
     <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center gap-6 px-6 py-10">
       <div className="text-center">
         <img
-          src="/logo-512.png"
+          src={`${import.meta.env.BASE_URL}logo-512.png`}
           alt="Quest for the Buck"
           className="mx-auto w-64 max-w-[80%] drop-shadow-[0_0_25px_rgba(212,165,49,0.25)]"
         />

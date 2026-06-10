@@ -1,0 +1,71 @@
+name: Deploy to GitHub Pages
+
+# Builds the app and publishes dist/ to GitHub Pages on every push to main.
+#
+# One-time setup in the repo: Settings → Pages → "Build and deployment" →
+# Source = "GitHub Actions".
+#
+# The app talks to Firebase from the browser, so this only hosts the static
+# files — see the auth note in the README about authorizing the Pages domain.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # allow manual runs from the Actions tab
+
+# Permissions required by the official Pages deploy actions.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deploy at a time; don't cancel an in-progress deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          # GitHub Pages serves a project repo from /<repo>/ — match the base
+          # to the repo name so an eventual rename won't break asset URLs.
+          VITE_BASE: /${{ github.event.repository.name }}/
+        run: npm run build
+
+      - name: Add SPA fallback (404 -> index.html)
+        # GitHub Pages has no SPA rewrite; serving index.html for unknown paths
+        # lets client-side routing handle deep links and refreshes.
+        run: cp dist/index.html dist/404.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

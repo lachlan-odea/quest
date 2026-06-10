@@ -212,6 +212,38 @@ firebase emulators:start          # Firestore :8080, Auth :9099
 
 ---
 
+## 🐙 Deploy to GitHub Pages (automatic)
+
+A workflow at [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
+builds and publishes to GitHub Pages on every push to `main`. Hosting is static
+only — the app still talks to your Firebase project from the browser.
+
+**One-time setup:**
+
+1. **Repo → Settings → Pages → Build and deployment → Source = "GitHub Actions".**
+2. **Firebase Console → Authentication → Settings → Authorized domains → Add
+   domain** and add your Pages domain (e.g. `lachlan-odea.github.io`).
+   Without this, anonymous sign-in is blocked on the live site and nothing
+   loads.
+3. Make sure your Firestore **rules are deployed** (see above) — Pages hosts the
+   UI but Firestore still enforces access.
+
+The app is then live at `https://<user>.github.io/<repo>/` (for this repo,
+`https://lachlan-odea.github.io/quest/`).
+
+> How it works: the build sets Vite's `base` to `/<repo>/` so assets resolve
+> under the subpath, React Router uses a matching `basename`, and a `404.html`
+> copy of `index.html` provides SPA fallback for deep links / refreshes.
+>
+> Firebase config for the CI build comes from the committed
+> [`.env.production`](.env.production) (a Firebase web key is not a secret — see
+> the comments in that file). If you'd rather not commit it, delete that file
+> and instead add the `VITE_FIREBASE_*` values as repo **Variables**
+> (Settings → Secrets and variables → Actions → Variables) and reference them in
+> the workflow's build `env`.
+
+---
+
 ## 📱 Tips for the night
 
 - Each phone = one anonymous user = one player. Tell everyone to **add the site

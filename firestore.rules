@@ -1,0 +1,174 @@
+rules_version = '2';
+
+// =============================================================================
+// Quest for the Groom — Firestore security rules (MVP)
+// -----------------------------------------------------------------------------
+// Goals for the MVP:
+//   * Everything requires an authenticated user (anonymous auth is fine).
+//   * Admins (event creators / anyone who enters the admin PIN) can manage
+//     all data scoped to their event.
+//   * Players can read public game data and manage their OWN player document.
+//   * Players CANNOT read other players' hidden quests.
+//   * Players CANNOT modify other players' documents.
+//
+// KNOWN LIMITATIONS (see README "Hardening" section):
+//   * Admin identity is bootstrapped via an `adminUids` array on the event.
+//     Any authed user could in principle append their own uid (the PIN gate
+//     is enforced in the client UI, not here). For a friendly party game this
+//     is acceptable. To harden: move admin elevation to a Cloud Function that
+//     verifies the PIN server-side and sets a custom auth claim, then check
+//     `request.auth.token.admin == true` here instead.
+//   * Players can write their own `xp` for fast, offline-friendly battles &
+//     quest claims (trust-based — it's a game among mates). To harden, block
+//     client xp writes here and award all XP from Cloud Functions.
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- Helpers ----------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function eventDoc(eventId) {
+      return get(/databases/$(database)/documents/events/$(eventId)).data;
+    }
+
+    // Is the caller an admin of the given event?
+    function isEventAdmin(eventId) {
+      return isSignedIn()
+        && request.auth.uid in eventDoc(eventId).adminUids;
+    }
+
+    // Does the caller own the player document with the given id?
+    function ownsPlayer(playerId) {
+      let p = get(/databases/$(database)/documents/players/$(playerId)).data;
+      return isSignedIn() && p.authUid == request.auth.uid;
+    }
+
+    // Only the listed fields changed between the existing doc and the update.
+    function onlyChanged(allowedFields) {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(allowedFields);
+    }
+
+    // ---- events -----------------------------------------------------------
+    match /events/{eventId} {
+      // Readable by any signed-in user (needed to join by code & verify PIN).
+      allow read: if isSignedIn();
+
+      // Create: caller must list themselves as the sole initial admin.
+      allow create: if isSignedIn()
+        && request.resource.data.adminUids == [request.auth.uid];
+
+      // Update: existing admins can change anything. A non-admin may ONLY
+      // append their own uid to adminUids (admin elevation via PIN in the UI)
+      // and change nothing else.
+      allow update: if isEventAdmin(eventId)
+        || (
+          isSignedIn()
+          && onlyChanged(['adminUids', 'updatedAt'])
+          && request.resource.data.adminUids.hasAll(resource.data.adminUids)
+          && request.resource.data.adminUids.hasOnly(
+               resource.data.adminUids.concat([request.auth.uid]))
+        );
+
+      allow delete: if isEventAdmin(eventId);
+    }
+
+    // ---- players ----------------------------------------------------------
+    match /players/{playerId} {
+      // Player documents are public within the game (leaderboard, teams, etc.).
+      // Hidden info lives on quests, not on the player doc.
+      allow read: if isSignedIn();
+
+      // Create your own player doc (authUid must match) or admin creates any.
+      allow create: if isSignedIn()
+        && (request.resource.data.authUid == request.auth.uid
+            || isEventAdmin(request.resource.data.eventId));
+
+      // Update your own doc, or admin updates any in their event.
+      allow update: if isEventAdmin(resource.data.eventId)
+        || ownsPlayer(playerId);
+
+      allow delete: if isEventAdmin(resource.data.eventId);
+    }
+
+    // ---- teams ------------------------------------------------------------
+    match /teams/{teamId} {
+      allow read: if isSignedIn();                       // public team data
+      allow write: if isEventAdmin(request.resource.data.eventId)
+        || isEventAdmin(resource.data.eventId);
+    }
+
+    // ---- quests -----------------------------------------------------------
+    match /quests/{questId} {
+      // A quest is readable if it is NOT hidden, OR the caller is the assigned
+      // player, OR the caller is an event admin.
+      allow read: if isSignedIn() && (
+        resource.data.hiddenFromOthers == false
+        || isEventAdmin(resource.data.eventId)
+        || (resource.data.assignedPlayerId != null
+            && ownsPlayer(resource.data.assignedPlayerId))
+      );
+
+      // Admins create/assign/award quests.
+      allow create: if isEventAdmin(request.resource.data.eventId);
+      allow delete: if isEventAdmin(resource.data.eventId);
+
+      // Admin can update anything. The assigned player may only submit proof
+      // (set proofNote) — they cannot change status/reward themselves.
+      allow update: if isEventAdmin(resource.data.eventId)
+        || (
+          resource.data.assignedPlayerId != null
+          && ownsPlayer(resource.data.assignedPlayerId)
+          && onlyChanged(['proofNote', 'updatedAt'])
+        );
+    }
+
+    // ---- battles ----------------------------------------------------------
+    match /battles/{battleId} {
+      allow read: if isSignedIn();
+
+      // A player may create a battle they are part of; admins can create any.
+      allow create: if isEventAdmin(request.resource.data.eventId)
+        || (isSignedIn()
+            && ownsPlayer(request.resource.data.challengerId));
+
+      // Either participant or an admin may update/resolve a battle.
+      allow update: if isEventAdmin(resource.data.eventId)
+        || ownsPlayer(resource.data.challengerId)
+        || ownsPlayer(resource.data.defenderId);
+
+      allow delete: if isEventAdmin(resource.data.eventId);
+    }
+
+    // ---- upgrades (shop catalog) ------------------------------------------
+    match /upgrades/{upgradeId} {
+      allow read: if isSignedIn();                       // shop is public
+      allow write: if isEventAdmin(request.resource.data.eventId)
+        || isEventAdmin(resource.data.eventId);
+    }
+
+    // ---- notifications (admin broadcasts) ---------------------------------
+    match /notifications/{notifId} {
+      // Everyone in the event can read announcements.
+      allow read: if isSignedIn();
+      // Only admins can broadcast.
+      allow create: if isEventAdmin(request.resource.data.eventId);
+      allow update: if false;
+      allow delete: if isEventAdmin(resource.data.eventId);
+    }
+
+    // ---- activityLog ------------------------------------------------------
+    match /activityLog/{entryId} {
+      allow read: if isSignedIn();
+      // Any signed-in player can append a log entry (battle/quest events);
+      // entries are immutable once written, and only admins can delete.
+      allow create: if isSignedIn();
+      allow update: if false;
+      allow delete: if isEventAdmin(resource.data.eventId);
+    }
+  }
+}

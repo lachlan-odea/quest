@@ -1,0 +1,81 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700;900&family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-tavern-800 text-parchment-100 font-body antialiased;
+    /* Dark tavern backdrop: warm radial glow over a deep brown base. */
+    background-image:
+      radial-gradient(
+        ellipse at top,
+        rgba(212, 165, 49, 0.12),
+        transparent 55%
+      ),
+      radial-gradient(
+        ellipse at bottom,
+        rgba(217, 83, 30, 0.08),
+        transparent 60%
+      );
+    background-attachment: fixed;
+    /* Respect iOS safe areas (notch / home indicator). */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+      env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-display;
+  }
+
+  /* Prevent text auto-zoom on input focus (iOS) — keep inputs >= 16px. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+@layer components {
+  /* Parchment-style card used for quest cards and key surfaces. */
+  .parchment-card {
+    @apply rounded-xl border border-gold-600/40 bg-parchment-100 text-tavern-900 shadow-lg;
+    background-image: linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.4),
+      rgba(212, 192, 137, 0.25)
+    );
+  }
+
+  .tavern-card {
+    @apply rounded-xl border border-gold-600/30 bg-tavern-700/80 backdrop-blur-sm shadow-lg;
+  }
+
+  /* Gold heading text with a subtle glow. */
+  .gold-text {
+    @apply text-gold-400;
+    text-shadow: 0 0 12px rgba(212, 165, 49, 0.25);
+  }
+}
+
+/* Hide scrollbars on horizontal scrollers but keep functionality. */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

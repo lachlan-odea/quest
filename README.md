@@ -1,9 +1,10 @@
 # ⚔️🍺 Quest for the Buck
 
 A mobile-first, DnD-style party game for a **bucks night / weekend**. Players roll
-fantasy character stats, receive **secret quests**, join teams, **battle** each
-other with dice, earn **XP**, and spend it on **upgrades** in the shop. One person
-runs the night as the **Game Master (admin)**.
+four bucks-night attributes (**Stamina, Rizz, Shenanigans, Vibes**), receive
+**secret quests**, join teams, **battle** each other with dice, earn **XP**, and
+spend it on **upgrades** in the shop. One person runs the night as the
+**Game Master (admin)**.
 
 Built with **React + TypeScript + Vite + Tailwind CSS** and **Firebase**
 (Anonymous Auth, Cloud Firestore, Hosting).
@@ -15,9 +16,11 @@ Built with **React + TypeScript + Vite + Tailwind CSS** and **Firebase**
 **Players**
 - Join an event with a short code, pick a funny fantasy class
 - Roll a character sheet (4d6 drop lowest) with a dice animation — once only
-- View D&D-style stats & modifiers, buffs/debuffs, inventory and titles
+- View their four attributes & modifiers, buffs/debuffs, inventory and titles
 - See **only their own** hidden quests; submit proof notes
 - Challenge other players to dice battles; win XP, losers get funny debuffs
+- Roll on the **Table of Divine Favour** (d20 of punishments & blessings) with
+  an animated reveal — including the legendary double-20 **Groom's Blessing**
 - Spend XP in the upgrade shop (stat boosts, perks, titles, debuff cleanses)
 - Leaderboard (players & teams), team page, and a live activity feed
 
@@ -28,7 +31,10 @@ Built with **React + TypeScript + Vite + Tailwind CSS** and **Firebase**
 - Create hidden quests, assign them, mark complete (awards XP) or failed
 - Award/remove XP with quick buttons
 - View battle history, cancel stuck battles
-- Tune game balance (XP curve, battle rewards, cooldown) and **reset the game**
+- Trigger Divine Favour rolls, grant the Groom's Blessing, assign or clear
+  debuffs & effects, and review the roll history
+- Tune game balance (XP curve, battle rewards, cooldown, **Divine Favour mode**)
+  and **reset the game**
 
 ---
 
@@ -116,6 +122,7 @@ src/
 │   ├── firebase.ts    # Firebase modular SDK init (+ emulator wiring)
 │   ├── dice.ts        # 4d6-drop-lowest, modifiers, d20 battle rolls
 │   ├── classes.ts     # Funny fantasy character classes
+│   ├── divineFavour.ts# d20 Table of Divine Favour + Groom's Blessing
 │   ├── seedData.ts    # Quest / upgrade / team / debuff templates
 │   └── utils.ts       # cn(), join codes, level maths, time-ago, shuffle…
 ├── services/          # One file per collection — all Firestore access
@@ -125,6 +132,7 @@ src/
 │   ├── questService.ts
 │   ├── battleService.ts
 │   ├── upgradeService.ts
+│   ├── divineFavourService.ts
 │   ├── teamService.ts
 │   └── activityService.ts
 ├── hooks/             # useAuth, useEvent, usePlayer, useLeaderboard,
@@ -137,20 +145,93 @@ src/
 
 ### Data model (Firestore collections)
 
-`events`, `players`, `teams`, `quests`, `battles`, `upgrades`, `activityLog` —
-each document stores its own `id` and (except `events`) an `eventId`. See
-[`src/types/index.ts`](src/types/index.ts) for the full interfaces. Timestamps
-are epoch milliseconds for simplicity.
+`events`, `players`, `teams`, `quests`, `battles`, `upgrades`, `activityLog`,
+`divineFavourRolls` — each document stores its own `id` and (except `events`) an
+`eventId`. See [`src/types/index.ts`](src/types/index.ts) for the full
+interfaces. Timestamps are epoch milliseconds for simplicity.
+
+> **Divine Favour rolls** live in a top-level `divineFavourRolls` collection
+> (keyed by `eventId` + `playerId`), not the `events/{id}/divineFavourRolls`
+> subcollection the brief suggested. This keeps queries index-free and matches
+> every other collection here; the trade-off is history is event-public rather
+> than per-player private (see hardening note 4).
+
+### Attributes
+
+Every hero has **four bucks-night attributes** (rolled `4d6 drop lowest`,
+modifier = `floor((score - 10) / 2)`):
+
+| Attribute | What it covers |
+| --- | --- |
+| **Stamina** | Endurance, resisting debuffs, late-night quests, drinking-related challenges, surviving the Hangover Wraith. |
+| **Rizz** | Social power — charm, persuasion, storytelling, speeches, toasts, negotiation, leadership and social battles. |
+| **Shenanigans** | Creativity, trickery, problem solving, scheming, secret quests, puzzles and completing ridiculous objectives. |
+| **Vibes** | Chaotic energy and luck — random encounters, luck-based events, chaos quests, wildcard battles and unexpected opportunities. |
 
 ### Game mechanics
 
-- **Stats:** `4d6 drop lowest` per ability; modifier = `floor((score - 10) / 2)`.
-- **Battles:** each side rolls `d20 + stat modifier`; higher total wins (ties go
-  to the defender). Winner earns XP; loser gets a random temporary debuff.
-  A per-player cooldown (`battleCooldownSeconds`) prevents spam.
+- **Attributes:** `4d6 drop lowest` per attribute; modifier =
+  `floor((score - 10) / 2)`. You only roll once (unless an admin resets you).
+- **Battles:** the challenger picks one of **Stamina / Rizz / Shenanigans /
+  Vibes**; each side rolls `d20 + attribute modifier`; higher total wins (ties
+  go to the defender). Winner earns XP; loser gets a random temporary debuff.
+  A per-player cooldown (`battleCooldownSeconds`) prevents spam. Examples:
+  - **Battle of Stamina** — an endurance or resistance challenge.
+  - **Battle of Rizz** — a social challenge, toast, persuasion or speech.
+  - **Battle of Shenanigans** — creative problem solving, scheming or a secret objective.
+  - **Battle of Vibes** — chaos, luck or a wildcard challenge.
 - **XP & levels:** `level = floor(xp / xpPerLevel) + 1`. Available XP =
   `xp - spentXp`.
-- **Quests:** difficulty → XP reward; admin marks complete to award it.
+- **Quests:** difficulty → XP reward; admin marks complete to award it. Quests
+  may carry an optional **recommended attribute** as a hint.
+- **Upgrades:** the shop covers all four attributes — e.g. *Iron Liver* (+1
+  Stamina), *Silver Tongue* (+1 Rizz), *Mastermind* (+1 Shenanigans),
+  *Fortune's Favourite* (+1 Vibes), plus perks like *Tavern Veteran*,
+  *Bard's Blessing*, *Trickster Supreme* and *Avatar of Chaos*.
+
+### 🎲 The Table of Divine Favour
+
+A reusable d20 luck table players can roll after battles, major quests, or
+whenever the Game Master triggers it. The animated reveal shows the result, its
+**tier**, and the effects applied.
+
+- **Rolls 1–10 — punishments.** XP loss, cursed titles, attribute/roll penalties,
+  social forfeits (e.g. *Voice of the Oracle*: only speak in questions for 15
+  min), restrictions (e.g. *The Lost Scroll*: no upgrades next battle), and
+  forced challenges (*Dionysus Laughs*: challenge someone in 15 min or lose XP).
+- **Rolls 11–17 — minor blessings.** Small XP, debuff cleanse, or `+1` to an
+  attribute for your next battle; *Favour of Hermes* gives +25 XP on your next
+  quest.
+- **Rolls 18–19 — strong blessings.** `+2 Shenanigans` / `+2 Rizz` for the next
+  battle.
+- **Roll 20 — Divine Intervention.** Choose ONE: +200 XP · a free upgrade token
+  · remove all debuffs · +100 team XP · auto-win your next stat roll.
+
+**Legendary Variant — The Groom's Blessing.** A natural 20 immediately rolls a
+second d20. **Double 20** triggers the Groom's Blessing: **+500 XP**, a
+**legendary title**, **debuff immunity for the rest of the night**, and **+100
+team XP** — celebrated on-screen with confetti. (It's deliberately ~1-in-400.)
+
+**How effects work.** Instant effects (XP, titles, cleanses, immunity, team XP,
+free-upgrade token) apply to the player immediately. Ongoing/behavioural effects
+become **active effects** shown on the character sheet. The battle engine
+enforces what it can — attribute & roll modifiers, auto-win, and the
+*challenge-block* curse — and consumes *"next battle"* effects once used. Roleplay
+effects (accents, toasts, silences) are surfaced as rules for everyone to police.
+
+**Debuffs.** Battle losers cop a random debuff; the Game Master can also assign
+any of the named, mythology-themed debuffs (Curse of Echoes, Minotaur's Maze,
+Medusa's Glare, …) from the **Divine** admin tab, and clear active
+effects/debuffs from there. Players with **debuff immunity** shrug debuffs off.
+
+**Battle integration.** The `divineFavourMode` event setting controls who may
+roll after a battle: `winnerOnly` (default), `bothPlayers`, `adminTriggered`
+(only the GM triggers it), or `disabled`. Eligible players get a **Roll Divine
+Favour** button on the battle result screen.
+
+**Quest integration.** After a major quest the GM can trigger a roll for the
+player from the **Divine** admin tab. (A future enhancement: legendary quests
+auto-trigger a roll.)
 
 ---
 
@@ -182,6 +263,13 @@ model:
    (quest completion, battle resolution, purchases), validated server-side.
 3. **No field-level validation** of arbitrary writes beyond ownership. Add
    `request.resource.data` shape checks per collection for production.
+4. **Divine Favour effects are applied client-side** (same trust model as XP):
+   rolling writes a `divineFavourRolls` record and patches the player document
+   from the browser, and roll history is readable by anyone in the event.
+   **Harden:** move `rollDivineFavour` / effect application into a **Cloud
+   Function** (the service is structured so callers wouldn't change — swap the
+   client writes for a callable), make the rolls collection owner/admin-read
+   only, and query a player's history by `playerId`.
 
 These trade-offs are intentional for a one-weekend party MVP — the comments in
 `firestore.rules` point at each one.

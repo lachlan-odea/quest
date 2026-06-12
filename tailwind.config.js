@@ -48,11 +48,16 @@ export default {
           '0%': { transform: 'translateY(8px)', opacity: '0' },
           '100%': { transform: 'translateY(0)', opacity: '1' },
         },
+        'confetti-fall': {
+          '0%': { transform: 'translateY(-10vh) rotate(0deg)', opacity: '1' },
+          '100%': { transform: 'translateY(110vh) rotate(720deg)', opacity: '0' },
+        },
       },
       animation: {
         'dice-spin': 'dice-spin 0.7s ease-in-out',
         'pop-in': 'pop-in 0.3s ease-out',
         'float-up': 'float-up 0.4s ease-out',
+        'confetti-fall': 'confetti-fall linear forwards',
       },
     },
   },

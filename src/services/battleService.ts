@@ -17,6 +17,7 @@ import {
 } from 'firebase/firestore';
 import { db, COLLECTIONS } from '@/lib/firebase';
 import type {
+  ActiveEffect,
   Battle,
   EventSettings,
   Player,
@@ -30,13 +31,76 @@ import { logActivity } from './activityService';
 
 const battlesCol = collection(db, COLLECTIONS.battles);
 
-/** Effective stat value = base stat + active buff/debuff deltas. */
+const effectsOf = (player: Player): ActiveEffect[] => player.activeEffects ?? [];
+
+/**
+ * Effective stat value = base stat + active buff/debuff deltas + any Divine
+ * Favour `temporaryAttributeModifier`s for this attribute.
+ */
 export function effectiveStat(player: Player, stat: StatKey): number {
-  const delta = [...player.activeBuffs, ...player.activeDebuffs].reduce(
+  const buffDelta = [...player.activeBuffs, ...player.activeDebuffs].reduce(
     (sum, e) => sum + (e.statDelta?.[stat] ?? 0),
     0,
   );
-  return player.stats[stat] + delta;
+  const fxDelta = effectsOf(player).reduce(
+    (sum, ae) =>
+      sum +
+      ae.effects.reduce(
+        (s, e) =>
+          s +
+          (e.type === 'temporaryAttributeModifier' && e.attribute === stat
+            ? e.value ?? 0
+            : 0),
+        0,
+      ),
+    0,
+  );
+  return player.stats[stat] + buffDelta + fxDelta;
+}
+
+/** Flat d20 modifier from Divine Favour `battleRollModifier` effects. */
+export function battleRollBonus(player: Player): number {
+  return effectsOf(player).reduce(
+    (sum, ae) =>
+      sum +
+      ae.effects.reduce(
+        (s, e) => s + (e.type === 'battleRollModifier' ? e.value ?? 0 : 0),
+        0,
+      ),
+    0,
+  );
+}
+
+/** Does the player hold an "auto-win next stat roll" blessing? */
+export function hasAutoWin(player: Player): boolean {
+  return effectsOf(player).some((ae) =>
+    ae.effects.some((e) => e.type === 'autoWinNextStatRoll'),
+  );
+}
+
+/** Is the player blocked from challenging (e.g. Minotaur's Maze)? */
+export function hasChallengeRestriction(player: Player): boolean {
+  return effectsOf(player).some((ae) =>
+    ae.effects.some((e) => e.type === 'challengeRestriction'),
+  );
+}
+
+/** Active effects remaining after consuming any "until next battle" ones. */
+function consumeNextBattle(player: Player): ActiveEffect[] {
+  return effectsOf(player).filter(
+    (ae) => !ae.effects.some((e) => e.until === 'nextBattle'),
+  );
+}
+
+/** Write back a player's active effects if a battle consumed any. */
+async function persistConsumed(player: Player): Promise<void> {
+  const remaining = consumeNextBattle(player);
+  if (remaining.length !== effectsOf(player).length) {
+    await updateDoc(doc(db, COLLECTIONS.players, player.id), {
+      activeEffects: remaining,
+      updatedAt: Date.now(),
+    });
+  }
 }
 
 /** How long until this player can battle again (ms). 0 = ready now. */
@@ -72,6 +136,11 @@ export async function createChallenge(input: ChallengeInput): Promise<Battle> {
   }
   if (challenger.id === defender.id) {
     throw new Error('You cannot challenge yourself.');
+  }
+  if (hasChallengeRestriction(challenger)) {
+    throw new Error(
+      'A curse blocks you from challenging anyone until you complete a quest.',
+    );
   }
 
   const now = Date.now();
@@ -124,8 +193,19 @@ export async function resolveBattle(
   const cRoll = battleRoll(effectiveStat(challenger, battle.challengerStat));
   const dRoll = battleRoll(effectiveStat(defender, defenderStat));
 
+  // Divine Favour flat roll modifiers (e.g. Burden of Olympus -2).
+  const cTotal = cRoll.total + battleRollBonus(challenger);
+  const dTotal = dRoll.total + battleRollBonus(defender);
+
+  // Auto-win blessings trump the dice; if both hold one, fall back to the roll.
+  const cAuto = hasAutoWin(challenger);
+  const dAuto = hasAutoWin(defender);
+  let challengerWins: boolean;
+  if (cAuto && !dAuto) challengerWins = true;
+  else if (dAuto && !cAuto) challengerWins = false;
   // Ties broken in favour of the defender (you must beat them to win).
-  const challengerWins = cRoll.total > dRoll.total;
+  else challengerWins = cTotal > dTotal;
+
   const winner = challengerWins ? challenger : defender;
   const loser = challengerWins ? defender : challenger;
 
@@ -134,8 +214,8 @@ export async function resolveBattle(
     defenderStat,
     challengerRoll: cRoll.roll,
     defenderRoll: dRoll.roll,
-    challengerTotal: cRoll.total,
-    defenderTotal: dRoll.total,
+    challengerTotal: cTotal,
+    defenderTotal: dTotal,
     winnerId: winner.id,
     loserId: loser.id,
     status: 'completed' as const,
@@ -151,6 +231,10 @@ export async function resolveBattle(
     `won a battle vs ${loser.name}`,
   );
   await addDebuff(loser, randomDebuff());
+
+  // Consume any "until next battle" Divine Favour effects on both sides.
+  await persistConsumed(challenger);
+  await persistConsumed(defender);
 
   await logActivity(
     battle.eventId,

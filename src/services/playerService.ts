@@ -22,12 +22,10 @@ import { logActivity } from './activityService';
 const playersCol = collection(db, COLLECTIONS.players);
 
 const ZERO_STATS: StatBlock = {
-  strength: 0,
-  charisma: 0,
-  constitution: 0,
-  wisdom: 0,
-  dexterity: 0,
-  luck: 0,
+  stamina: 0,
+  rizz: 0,
+  shenanigans: 0,
+  vibes: 0,
 };
 
 export interface CreatePlayerInput {
@@ -53,6 +51,9 @@ export async function createPlayer(input: CreatePlayerInput): Promise<Player> {
     inventory: [],
     activeBuffs: [],
     activeDebuffs: [],
+    activeEffects: [],
+    titles: [],
+    divineFavourRollIds: [],
     assignedQuestIds: [],
     completedQuestIds: [],
     upgradeIds: [],
@@ -197,11 +198,24 @@ export async function awardXp(
   }
 }
 
-/** Apply a temporary debuff (e.g. after losing a battle). */
+/**
+ * Apply a temporary debuff (e.g. after losing a battle).
+ * No-ops (with a celebratory log) if the player has active debuff immunity —
+ * e.g. after the legendary Groom's Blessing.
+ */
 export async function addDebuff(
   player: Player,
   debuff: StatusEffect,
 ): Promise<void> {
+  if (player.debuffImmuneUntil && player.debuffImmuneUntil > Date.now()) {
+    await logActivity(
+      player.eventId,
+      'player',
+      `${player.name} shrugged off "${debuff.label}" — debuff immunity! 🛡️`,
+      player.id,
+    );
+    return;
+  }
   await updateDoc(doc(db, COLLECTIONS.players, player.id), {
     activeDebuffs: [...player.activeDebuffs, debuff],
     updatedAt: Date.now(),

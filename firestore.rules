@@ -161,6 +161,30 @@ service cloud.firestore {
       allow delete: if isEventAdmin(resource.data.eventId);
     }
 
+    // ---- divineFavourRolls ------------------------------------------------
+    // Records of rolls on the Table of Divine Favour. The actual game effects
+    // are applied to the player document (client-side, like XP — see README
+    // "Hardening"); this collection is the audit trail / history.
+    match /divineFavourRolls/{rollId} {
+      // Readable by any signed-in player in the event (history is public, like
+      // battles/activity). To harden privacy, lock this to the owner/admin and
+      // query history by playerId instead of filtering client-side.
+      allow read: if isSignedIn();
+
+      // A player may create a roll ONLY for their own playerId; admins any.
+      // (Creating a roll doc does not itself grant XP — that's a separate
+      // player-doc write, governed by the players rules above.)
+      allow create: if isEventAdmin(request.resource.data.eventId)
+        || (isSignedIn()
+            && ownsPlayer(request.resource.data.playerId));
+
+      // The roller (owner) or an admin may stamp effectsApplied / selectedChoice.
+      allow update: if isEventAdmin(resource.data.eventId)
+        || ownsPlayer(resource.data.playerId);
+
+      allow delete: if isEventAdmin(resource.data.eventId);
+    }
+
     // ---- activityLog ------------------------------------------------------
     match /activityLog/{entryId} {
       allow read: if isSignedIn();

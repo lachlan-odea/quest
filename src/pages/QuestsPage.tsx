@@ -8,6 +8,7 @@ import { usePlayer } from '@/hooks/usePlayer';
 import { useEvent } from '@/hooks/useEvent';
 import { useQuests } from '@/hooks/useQuests';
 import { submitProof } from '@/services/questService';
+import { STAT_LABELS } from '@/lib/dice';
 import type { Quest, QuestDifficulty } from '@/types';
 import { Badge, Button, EmptyState, SectionTitle, Spinner, Textarea } from '@/components/ui';
 
@@ -96,6 +97,11 @@ function QuestCard({ quest, editable }: { quest: Quest; editable?: boolean }) {
         <Badge color={diff.color}>{diff.label}</Badge>
       </div>
       <p className="text-sm text-tavern-800">{quest.description}</p>
+      {quest.recommendedAttribute && (
+        <p className="mt-1 text-xs font-semibold text-tavern-700">
+          🎯 Best tackled with {STAT_LABELS[quest.recommendedAttribute]}
+        </p>
+      )}
       <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-gold-600">
         🏅 {quest.xpReward} XP
         {quest.status === 'completed' && quest.completedAt && (

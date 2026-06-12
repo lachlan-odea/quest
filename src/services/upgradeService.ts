@@ -16,6 +16,7 @@ import {
 import { db, COLLECTIONS } from '@/lib/firebase';
 import type { Player, StatKey, Upgrade } from '@/types';
 import { shortId } from '@/lib/utils';
+import { STAT_KEYS } from '@/lib/dice';
 import { logActivity } from './activityService';
 
 const upgradesCol = collection(db, COLLECTIONS.upgrades);
@@ -78,15 +79,6 @@ export function canPurchase(
   return { ok: true };
 }
 
-const STAT_KEYS: StatKey[] = [
-  'strength',
-  'charisma',
-  'constitution',
-  'wisdom',
-  'dexterity',
-  'luck',
-];
-
 /**
  * Translate an upgrade's `effect` string into a patch on the player doc.
  * Supported effects:
@@ -99,7 +91,7 @@ const STAT_KEYS: StatKey[] = [
 function applyEffect(player: Player, upgrade: Upgrade): Partial<Player> {
   const effect = upgrade.effect;
 
-  // Permanent stat boost, e.g. "charisma+1".
+  // Permanent stat boost, e.g. "rizz+1".
   const statMatch = effect.match(/^([a-z]+)\+(\d+)$/);
   if (statMatch && STAT_KEYS.includes(statMatch[1] as StatKey)) {
     const stat = statMatch[1] as StatKey;
@@ -109,7 +101,7 @@ function applyEffect(player: Player, upgrade: Upgrade): Partial<Player> {
     };
   }
 
-  // Temporary buff, e.g. "buff:charisma+2:1battle".
+  // Temporary buff, e.g. "buff:rizz+2:1battle".
   const buffMatch = effect.match(/^buff:([a-z]+)\+(\d+):(.+)$/);
   if (buffMatch && STAT_KEYS.includes(buffMatch[1] as StatKey)) {
     const stat = buffMatch[1] as StatKey;

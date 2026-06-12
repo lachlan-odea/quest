@@ -22,6 +22,7 @@ import QuestsPage from '@/pages/QuestsPage';
 import TeamPage from '@/pages/TeamPage';
 import BattlePage from '@/pages/BattlePage';
 import BattleResultPage from '@/pages/BattleResultPage';
+import DivineFavourPage from '@/pages/DivineFavourPage';
 import ShopPage from '@/pages/ShopPage';
 import LeaderboardPage from '@/pages/LeaderboardPage';
 import ActivityFeedPage from '@/pages/ActivityFeedPage';
@@ -33,6 +34,7 @@ import AdminTeams from '@/pages/admin/AdminTeams';
 import AdminQuests from '@/pages/admin/AdminQuests';
 import AdminXP from '@/pages/admin/AdminXP';
 import AdminBattles from '@/pages/admin/AdminBattles';
+import AdminDivineFavour from '@/pages/admin/AdminDivineFavour';
 import AdminSettings from '@/pages/admin/AdminSettings';
 
 // Router basename derived from Vite's base (e.g. "/quest/" -> "/quest").
@@ -64,6 +66,7 @@ export default function App() {
                 <Route path="/team" element={<TeamPage />} />
                 <Route path="/battle" element={<BattlePage />} />
                 <Route path="/battle/:id" element={<BattleResultPage />} />
+                <Route path="/divine" element={<DivineFavourPage />} />
                 <Route path="/shop" element={<ShopPage />} />
                 <Route path="/leaderboard" element={<LeaderboardPage />} />
                 <Route path="/activity" element={<ActivityFeedPage />} />
@@ -79,6 +82,7 @@ export default function App() {
                 <Route path="/admin/quests" element={<AdminQuests />} />
                 <Route path="/admin/xp" element={<AdminXP />} />
                 <Route path="/admin/battles" element={<AdminBattles />} />
+                <Route path="/admin/divine" element={<AdminDivineFavour />} />
                 <Route path="/admin/settings" element={<AdminSettings />} />
               </Route>
             </Route>

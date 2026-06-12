@@ -75,6 +75,9 @@ export function PlayerLayout() {
 
         {menuOpen && (
           <div className="absolute right-3 top-full mt-1 w-48 overflow-hidden rounded-xl border border-gold-600/30 bg-tavern-800 shadow-xl">
+            <MenuLink to="/divine" onClick={() => setMenuOpen(false)}>
+              🎲 Divine Favour
+            </MenuLink>
             <MenuLink to="/team" onClick={() => setMenuOpen(false)}>
               🛡️ My Team
             </MenuLink>
@@ -163,6 +166,7 @@ const ADMIN_TABS = [
   { to: '/admin/quests', label: 'Quests' },
   { to: '/admin/xp', label: 'XP' },
   { to: '/admin/battles', label: 'Battles' },
+  { to: '/admin/divine', label: 'Divine' },
   { to: '/admin/settings', label: 'Settings' },
 ];
 

@@ -53,4 +53,5 @@ export const COLLECTIONS = {
   upgrades: 'upgrades',
   activityLog: 'activityLog',
   notifications: 'notifications',
+  divineFavourRolls: 'divineFavourRolls',
 } as const;

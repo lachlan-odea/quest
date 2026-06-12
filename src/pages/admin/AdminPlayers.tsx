@@ -107,12 +107,10 @@ function PlayerRow({
                 updatePlayer(player.id, {
                   hasRolled: false,
                   stats: {
-                    strength: 0,
-                    charisma: 0,
-                    constitution: 0,
-                    wisdom: 0,
-                    dexterity: 0,
-                    luck: 0,
+                    stamina: 0,
+                    rizz: 0,
+                    shenanigans: 0,
+                    vibes: 0,
                   },
                 })
               }

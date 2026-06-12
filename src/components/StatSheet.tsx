@@ -1,6 +1,12 @@
-/** Displays a StatBlock as a grid of stat tiles with D&D modifiers. */
+/** Displays a StatBlock as a grid of attribute tiles with modifiers. */
 import type { StatBlock, StatKey } from '@/types';
-import { STAT_KEYS, STAT_LABELS, formatModifier, statModifier } from '@/lib/dice';
+import {
+  STAT_KEYS,
+  STAT_LABELS,
+  STAT_BLURBS,
+  formatModifier,
+  statModifier,
+} from '@/lib/dice';
 import { cn } from '@/lib/utils';
 
 export function StatSheet({
@@ -33,9 +39,14 @@ function StatTile({
     <div className="tavern-card flex items-center justify-between gap-2 p-3">
       <div className="min-w-0">
         <p className="truncate text-xs uppercase tracking-wide text-parchment-300">
-          {compact ? STAT_LABELS[statKey].slice(0, 3) : STAT_LABELS[statKey]}
+          {compact ? STAT_LABELS[statKey].slice(0, 4) : STAT_LABELS[statKey]}
         </p>
         <p className="font-display text-2xl text-parchment-100">{value}</p>
+        {!compact && (
+          <p className="mt-0.5 text-[11px] leading-tight text-parchment-300/70">
+            {STAT_BLURBS[statKey]}
+          </p>
+        )}
       </div>
       <div
         className={cn(

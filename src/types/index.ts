@@ -29,13 +29,17 @@ export type UpgradeType =
   | 'title'
   | 'item';
 
-export type StatKey =
-  | 'strength'
-  | 'charisma'
-  | 'constitution'
-  | 'wisdom'
-  | 'dexterity'
-  | 'luck';
+export type StatKey = 'stamina' | 'rizz' | 'shenanigans' | 'vibes';
+
+/** Alias used by the Divine Favour system for readability. Same four keys. */
+export type AttributeKey = StatKey;
+
+/** How Divine Favour rolls are gated after a battle (event setting). */
+export type DivineFavourMode =
+  | 'winnerOnly'
+  | 'bothPlayers'
+  | 'adminTriggered'
+  | 'disabled';
 
 export type ActivityType =
   | 'event'
@@ -51,12 +55,10 @@ export type ActivityType =
 // -----------------------------------------------------------------------------
 
 export interface StatBlock {
-  strength: number;
-  charisma: number;
-  constitution: number;
-  wisdom: number;
-  dexterity: number;
-  luck: number;
+  stamina: number;
+  rizz: number;
+  shenanigans: number;
+  vibes: number;
 }
 
 /** A temporary buff/debuff applied to a player (e.g. after losing a battle). */
@@ -64,7 +66,7 @@ export interface StatusEffect {
   id: string;
   label: string;
   description: string;
-  /** Optional stat tweak this effect applies, e.g. { charisma: -1 }. */
+  /** Optional stat tweak this effect applies, e.g. { rizz: -1 }. */
   statDelta?: Partial<StatBlock>;
   /** Optional expiry as epoch ms; undefined = until removed. */
   expiresAt?: number;
@@ -78,6 +80,115 @@ export interface InventoryItem {
   upgradeId?: string;
 }
 
+// -----------------------------------------------------------------------------
+// Divine Favour & game effects
+// -----------------------------------------------------------------------------
+
+/**
+ * The atomic "thing a game effect does". A Divine Favour result, debuff or
+ * admin action is just a bundle of these. Kept deliberately small/extensible —
+ * a fun MVP, not a full rules engine. Behavioural effects (e.g. "speak only in
+ * questions") are tracked as `ActiveEffect`s and shown in the UI; a subset
+ * (XP, attribute/roll modifiers, immunity, auto-win, challenge restriction) is
+ * actually enforced by the battle/player services.
+ */
+export type EffectType =
+  | 'xpGain'
+  | 'xpLoss'
+  | 'temporaryAttributeModifier'
+  | 'battleRollModifier'
+  | 'questXpModifier'
+  | 'upgradeRestriction'
+  | 'challengeRestriction'
+  | 'forcedChallenge'
+  | 'titleGrant'
+  | 'debuff'
+  | 'removeDebuff'
+  | 'removeAllDebuffs'
+  | 'freeUpgrade'
+  | 'autoWinNextStatRoll'
+  | 'teamXpGain'
+  | 'debuffImmunity'
+  | 'socialPunishment'
+  | 'custom';
+
+/** When an active effect should stop applying / be consumed. */
+export type EffectUntil =
+  | 'nextBattle'
+  | 'nextQuest'
+  | 'questCompleted'
+  | 'endOfNight'
+  | 'manualClear';
+
+export interface GameEffect {
+  type: EffectType;
+  value?: number;
+  attribute?: AttributeKey;
+  durationMinutes?: number;
+  until?: EffectUntil;
+  title?: string;
+  description?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * An effect currently riding along on a player. Stat tweaks reuse the existing
+ * `activeBuffs`/`activeDebuffs` (StatusEffect) path so the battle maths already
+ * accounts for them; `activeEffects` holds the richer Divine Favour / debuff
+ * effects (roll modifiers, restrictions, social punishments, immunity, etc.).
+ */
+export interface ActiveEffect {
+  id: string;
+  /** Where it came from, e.g. "Divine Favour", "Battle loss", "Admin". */
+  source: string;
+  name: string;
+  description: string;
+  effects: GameEffect[];
+  /** Epoch ms. */
+  createdAt: number;
+  /** Epoch ms; undefined = until consumed / manually cleared. */
+  expiresAt?: number;
+  /** Epoch ms once cleared (kept for history); undefined = still active. */
+  clearedAt?: number;
+}
+
+export type DivineFavourTier =
+  | 'punishment'
+  | 'minorBlessing'
+  | 'strongBlessing'
+  | 'legendary';
+
+/** One pickable option for results that let the player choose (e.g. #20). */
+export interface DivineFavourChoice {
+  id: string;
+  label: string;
+  effects: GameEffect[];
+}
+
+export interface DivineFavourResult {
+  roll: number;
+  name: string;
+  description: string;
+  tier: DivineFavourTier;
+  effects: GameEffect[];
+  /** If present, the player/admin must pick exactly ONE option. */
+  choices?: DivineFavourChoice[];
+}
+
+export interface DivineFavourRoll {
+  id: string;
+  eventId: string;
+  playerId: string;
+  roll: number;
+  secondRoll?: number;
+  resultName: string;
+  resultDescription: string;
+  triggeredGroomsBlessing: boolean;
+  selectedChoice?: string;
+  effectsApplied: GameEffect[];
+  createdAt: number;
+}
+
 export interface EventSettings {
   /** XP awarded by difficulty tier for quests. */
   questXp: Record<QuestDifficulty, number>;
@@ -89,6 +200,8 @@ export interface EventSettings {
   xpPerLevel: number;
   /** Whether players resolve battles themselves or an admin must approve. */
   battlesNeedApproval: boolean;
+  /** Who may roll on the Table of Divine Favour after a battle. */
+  divineFavourMode: DivineFavourMode;
 }
 
 // -----------------------------------------------------------------------------
@@ -125,6 +238,16 @@ export interface Player {
   inventory: InventoryItem[];
   activeBuffs: StatusEffect[];
   activeDebuffs: StatusEffect[];
+  /** Richer Divine Favour / behavioural effects (see ActiveEffect). */
+  activeEffects: ActiveEffect[];
+  /** Honorary titles the player has earned (e.g. "Entropy's Chosen"). */
+  titles: string[];
+  /** Ids of this player's Divine Favour rolls (history pointer). */
+  divineFavourRollIds: string[];
+  /** Epoch ms until which the player is immune to debuffs; undefined = none. */
+  debuffImmuneUntil?: number;
+  /** A Divine Favour roll awaiting the player's choice (e.g. Divine Intervention). */
+  pendingDivineChoice?: DivineFavourRoll;
   assignedQuestIds: string[];
   completedQuestIds: string[];
   /** Ids of upgrades purchased (repeats allowed for repeatable upgrades). */
@@ -157,6 +280,8 @@ export interface Quest {
   xpReward: number;
   status: QuestStatus;
   hiddenFromOthers: boolean;
+  /** Optional attribute that best suits this quest (flavour / hint). */
+  recommendedAttribute?: StatKey;
   proofNote?: string;
   completedAt?: number;
   createdAt: number;
@@ -191,7 +316,7 @@ export interface Upgrade {
   description: string;
   cost: number;
   type: UpgradeType;
-  /** Free-form machine-readable effect tag, e.g. "charisma+1" or "title". */
+  /** Free-form machine-readable effect tag, e.g. "rizz+1" or "title". */
   effect: string;
   /** undefined = unlimited; otherwise max times a single player may buy it. */
   maxPurchases?: number;

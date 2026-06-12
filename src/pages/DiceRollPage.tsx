@@ -1,12 +1,20 @@
 /**
  * Dice roll page — roll the full character sheet with a fun animation.
- * Method: 4d6, drop the lowest, for each of the six stats. One roll only,
- * unless the admin resets the player.
+ * Method: 4d6, drop the lowest, for each of the four bucks-night attributes
+ * (Stamina, Rizz, Shenanigans, Vibes). One roll only, unless the admin resets
+ * the player.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePlayer } from '@/hooks/usePlayer';
-import { rollAbilityScore, STAT_KEYS, STAT_LABELS, statModifier, formatModifier } from '@/lib/dice';
+import {
+  rollAbilityScore,
+  STAT_KEYS,
+  STAT_LABELS,
+  STAT_BLURBS,
+  statModifier,
+  formatModifier,
+} from '@/lib/dice';
 import { rollStats } from '@/services/playerService';
 import type { StatBlock, StatKey } from '@/types';
 import { Button, Card, Spinner } from '@/components/ui';
@@ -109,17 +117,22 @@ export default function DiceRollPage() {
                 i < revealed ? 'opacity-100 animate-float-up' : 'opacity-20',
               )}
             >
-              <div className="w-24 flex-none">
+              <div className="min-w-0 flex-1 pr-2">
                 <p className="text-xs uppercase tracking-wide text-parchment-300">
                   {STAT_LABELS[r.key]}
                 </p>
                 {i < revealed && (
-                  <p className="font-display text-2xl text-parchment-100">
-                    {r.total}
-                    <span className="ml-1 text-sm text-gold-300">
-                      ({formatModifier(statModifier(r.total))})
-                    </span>
-                  </p>
+                  <>
+                    <p className="font-display text-2xl text-parchment-100">
+                      {r.total}
+                      <span className="ml-1 text-sm text-gold-300">
+                        ({formatModifier(statModifier(r.total))})
+                      </span>
+                    </p>
+                    <p className="mt-0.5 text-[11px] leading-tight text-parchment-300/70">
+                      {STAT_BLURBS[r.key]}
+                    </p>
+                  </>
                 )}
               </div>
               <div className="flex gap-1.5">

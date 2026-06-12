@@ -40,6 +40,7 @@ export const DEFAULT_EVENT_SETTINGS: EventSettings = {
   battleCooldownSeconds: 120,
   xpPerLevel: 300,
   battlesNeedApproval: false,
+  divineFavourMode: 'winnerOnly',
 };
 
 /** Format an epoch-ms timestamp as a short relative string. */

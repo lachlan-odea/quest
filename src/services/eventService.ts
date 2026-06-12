@@ -169,6 +169,7 @@ export async function seedEvent(eventId: string): Promise<void> {
       title: qt.title,
       description: qt.description,
       difficulty: qt.difficulty,
+      recommendedAttribute: qt.recommendedAttribute ?? null,
       xpReward: DEFAULT_EVENT_SETTINGS.questXp[qt.difficulty],
       status: 'unassigned',
       hiddenFromOthers: true,
@@ -194,6 +195,7 @@ export async function resetGame(eventId: string): Promise<void> {
     COLLECTIONS.battles,
     COLLECTIONS.upgrades,
     COLLECTIONS.activityLog,
+    COLLECTIONS.divineFavourRolls,
   ];
 
   for (const name of collectionsToWipe) {

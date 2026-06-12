@@ -7,10 +7,17 @@ import { useNavigate } from 'react-router-dom';
 import { useEvent } from '@/hooks/useEvent';
 import { useGame } from '@/context/GameContext';
 import { resetGame, updateEventSettings } from '@/services/eventService';
-import type { EventSettings, QuestDifficulty } from '@/types';
-import { Button, Card, Input, Label, SectionTitle, Spinner } from '@/components/ui';
+import type { DivineFavourMode, EventSettings, QuestDifficulty } from '@/types';
+import { Button, Card, Input, Label, SectionTitle, Select, Spinner } from '@/components/ui';
 
 const DIFFICULTIES: QuestDifficulty[] = ['easy', 'medium', 'hard', 'legendary'];
+
+const DIVINE_FAVOUR_MODES: { value: DivineFavourMode; label: string }[] = [
+  { value: 'winnerOnly', label: 'Winner only' },
+  { value: 'bothPlayers', label: 'Both players' },
+  { value: 'adminTriggered', label: 'Admin triggered' },
+  { value: 'disabled', label: 'Disabled' },
+];
 
 export default function AdminSettings() {
   const { event, eventId } = useEvent();
@@ -127,6 +134,28 @@ export default function AdminSettings() {
               </div>
             ))}
           </div>
+        </div>
+
+        <div>
+          <Label>Divine Favour after battles</Label>
+          <Select
+            value={draft.divineFavourMode ?? 'winnerOnly'}
+            onChange={(e) =>
+              setDraft({
+                ...draft,
+                divineFavourMode: e.target.value as DivineFavourMode,
+              })
+            }
+          >
+            {DIVINE_FAVOUR_MODES.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </Select>
+          <p className="mt-1 text-xs text-parchment-300/70">
+            Who may roll on the Table of Divine Favour after a battle.
+          </p>
         </div>
 
         <Button fullWidth onClick={save} disabled={busy}>

@@ -8,6 +8,11 @@ import { useEvent } from '@/hooks/useEvent';
 import { classEmoji, getClass } from '@/lib/classes';
 import { levelProgress } from '@/lib/utils';
 import { StatSheet } from '@/components/StatSheet';
+import {
+  ActiveEffectList,
+  ImmunityBanner,
+  TitleList,
+} from '@/components/DivineEffects';
 import { Badge, Button, Card, EmptyState, ProgressBar, SectionTitle, Spinner } from '@/components/ui';
 
 export default function CharacterSheetPage() {
@@ -63,14 +68,29 @@ export default function CharacterSheetPage() {
         </div>
       </Card>
 
+      {/* Debuff immunity / pending divine choice */}
+      <ImmunityBanner player={player} />
+      {player.pendingDivineChoice && (
+        <Link to="/divine">
+          <Card className="border-gold-400/70 bg-gold-500/10 text-center">
+            <p className="font-display text-gold-300">🌟 Divine Intervention awaits!</p>
+            <p className="text-xs text-parchment-300">
+              Tap to choose your reward.
+            </p>
+          </Card>
+        </Link>
+      )}
+
       {/* Stats */}
       <div>
-        <SectionTitle>Ability Scores</SectionTitle>
+        <SectionTitle>Attributes</SectionTitle>
         <StatSheet stats={player.stats} />
       </div>
 
-      {/* Buffs & debuffs */}
-      {(player.activeBuffs.length > 0 || player.activeDebuffs.length > 0) && (
+      {/* Buffs, debuffs & Divine Favour effects */}
+      {(player.activeBuffs.length > 0 ||
+        player.activeDebuffs.length > 0 ||
+        (player.activeEffects?.length ?? 0) > 0) && (
         <div>
           <SectionTitle>Active Effects</SectionTitle>
           <div className="flex flex-col gap-2">
@@ -86,7 +106,16 @@ export default function CharacterSheetPage() {
                 <p className="text-sm text-parchment-200">{d.description}</p>
               </Card>
             ))}
+            <ActiveEffectList effects={player.activeEffects ?? []} />
           </div>
+        </div>
+      )}
+
+      {/* Titles */}
+      {(player.titles?.length ?? 0) > 0 && (
+        <div>
+          <SectionTitle>Titles</SectionTitle>
+          <TitleList titles={player.titles ?? []} />
         </div>
       )}
 
@@ -114,6 +143,9 @@ export default function CharacterSheetPage() {
         )}
       </div>
 
+      <Link to="/divine">
+        <Button fullWidth>🎲 Table of Divine Favour</Button>
+      </Link>
       <Link to="/shop">
         <Button variant="secondary" fullWidth>
           🛒 Spend XP in the Shop

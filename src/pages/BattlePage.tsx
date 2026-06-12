@@ -183,7 +183,7 @@ function ChallengeForm({
   onChallenge: (defender: Player, stat: StatKey) => Promise<void>;
 }) {
   const [defenderId, setDefenderId] = useState(opponents[0]?.id ?? '');
-  const [stat, setStat] = useState<StatKey>('charisma');
+  const [stat, setStat] = useState<StatKey>('rizz');
   const [busy, setBusy] = useState(false);
 
   const defender = opponents.find((o) => o.id === defenderId);
@@ -249,7 +249,7 @@ function RespondCard({
   onAccept: (stat: StatKey) => Promise<void>;
   onDecline: () => void;
 }) {
-  const [stat, setStat] = useState<StatKey>('strength');
+  const [stat, setStat] = useState<StatKey>('stamina');
   const [busy, setBusy] = useState(false);
 
   return (

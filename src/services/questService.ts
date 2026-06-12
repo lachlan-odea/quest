@@ -18,7 +18,7 @@ import {
   arrayRemove,
 } from 'firebase/firestore';
 import { db, COLLECTIONS } from '@/lib/firebase';
-import type { Player, Quest, QuestDifficulty } from '@/types';
+import type { Player, Quest, QuestDifficulty, StatKey } from '@/types';
 import { awardXp } from './playerService';
 import { logActivity } from './activityService';
 
@@ -30,6 +30,7 @@ export interface CreateQuestInput {
   description: string;
   difficulty: QuestDifficulty;
   xpReward: number;
+  recommendedAttribute?: StatKey | null;
   hiddenFromOthers?: boolean;
   assignedPlayerId?: string | null;
   assignedTeamId?: string | null;
@@ -50,6 +51,10 @@ export async function createQuest(input: CreateQuestInput): Promise<Quest> {
     status: assignedPlayerId ? 'assigned' : 'unassigned',
     createdAt: now,
     updatedAt: now,
+    // Firestore rejects `undefined`, so only include the field when set.
+    ...(input.recommendedAttribute
+      ? { recommendedAttribute: input.recommendedAttribute }
+      : {}),
   };
   const ref = await addDoc(questsCol, data);
   if (assignedPlayerId) {
@@ -125,7 +130,7 @@ export async function submitProof(
 
 /**
  * Mark a quest complete and award its XP to the assigned player.
- * `multiplier` lets perks like "Groom's Blessing" double the reward.
+ * `multiplier` lets bonus-XP perks (e.g. "Crowd Favourite") boost the reward.
  */
 export async function completeQuest(
   quest: Quest,

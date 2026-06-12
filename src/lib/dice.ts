@@ -7,31 +7,35 @@
 
 import type { StatBlock, StatKey } from '@/types';
 
-export const STAT_KEYS: StatKey[] = [
-  'strength',
-  'charisma',
-  'constitution',
-  'wisdom',
-  'dexterity',
-  'luck',
-];
+export const STAT_KEYS: StatKey[] = ['stamina', 'rizz', 'shenanigans', 'vibes'];
 
 export const STAT_LABELS: Record<StatKey, string> = {
-  strength: 'Strength',
-  charisma: 'Charisma',
-  constitution: 'Constitution',
-  wisdom: 'Wisdom',
-  dexterity: 'Dexterity',
-  luck: 'Luck',
+  stamina: 'Stamina',
+  rizz: 'Rizz',
+  shenanigans: 'Shenanigans',
+  vibes: 'Vibes',
 };
 
+/** Short hint shown in pickers / on the character sheet. */
 export const STAT_BLURBS: Record<StatKey, string> = {
-  strength: 'Carrying mates, opening jars, arm wrestles.',
-  charisma: 'Chatting to strangers, talking your way out of trouble.',
-  constitution: 'Pacing yourself, surviving the big nights.',
-  wisdom: 'Knowing when to call it, finding the late-night feed.',
-  dexterity: 'Pool, darts, beer pong, dodging the round.',
-  luck: 'Pure, unearned good fortune.',
+  stamina:
+    'Endurance, resisting debuffs, late-night quests and surviving the Hangover Wraith.',
+  rizz: 'Charm, persuasion, storytelling, speeches, toasts and social battles.',
+  shenanigans:
+    'Creativity, trickery, scheming, puzzles and pulling off ridiculous objectives.',
+  vibes:
+    'Chaotic energy, luck, wildcard battles and benefiting from unpredictable chaos.',
+};
+
+/** Longer flavour description for each attribute (character sheet / rolling). */
+export const STAT_DESCRIPTIONS: Record<StatKey, string> = {
+  stamina:
+    'Your ability to endure the trials of the weekend — endurance challenges, resisting debuffs, late-night quests, drinking-related challenges and surviving the Hangover Wraith.',
+  rizz: 'Your social power — charm, persuasion, storytelling and confidence. Used for convincing strangers, speeches, toasts, negotiation, leadership and social battles.',
+  shenanigans:
+    'Your creativity, trickery, problem solving and scheming — secret quests, creative solutions, puzzles and completing difficult objectives.',
+  vibes:
+    'Your chaotic energy and knack for benefiting from unpredictable situations — random encounters, luck-based events, chaos quests and wildcard battles.',
 };
 
 /** Roll a single die with the given number of sides (1..sides). */

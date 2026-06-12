@@ -26,7 +26,7 @@ export function BattleChallengeModal() {
   const { players } = useLeaderboard(eventId);
   const { incoming } = useBattle(eventId, player?.id);
   const navigate = useNavigate();
-  const [stat, setStat] = useState<StatKey>('strength');
+  const [stat, setStat] = useState<StatKey>('stamina');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

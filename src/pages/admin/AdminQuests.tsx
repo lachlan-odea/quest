@@ -14,7 +14,8 @@ import {
   failQuest,
 } from '@/services/questService';
 import { QUEST_TEMPLATES } from '@/lib/seedData';
-import type { Player, Quest, QuestDifficulty } from '@/types';
+import { STAT_KEYS, STAT_LABELS } from '@/lib/dice';
+import type { Player, Quest, QuestDifficulty, StatKey } from '@/types';
 import {
   Badge,
   Button,
@@ -103,6 +104,7 @@ function QuestForm({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [difficulty, setDifficulty] = useState<QuestDifficulty>('medium');
+  const [recommendedAttribute, setRecommendedAttribute] = useState<StatKey | ''>('');
   const [busy, setBusy] = useState(false);
 
   async function submit() {
@@ -115,6 +117,7 @@ function QuestForm({
         description,
         difficulty,
         xpReward: xpByDifficulty[difficulty],
+        recommendedAttribute: recommendedAttribute || null,
         hiddenFromOthers: true,
       });
       onDone();
@@ -128,6 +131,7 @@ function QuestForm({
     setTitle(t.title);
     setDescription(t.description);
     setDifficulty(t.difficulty);
+    setRecommendedAttribute(t.recommendedAttribute ?? '');
   }
 
   return (
@@ -151,6 +155,17 @@ function QuestForm({
         {DIFFICULTIES.map((d) => (
           <option key={d} value={d}>
             {d} · {xpByDifficulty[d]} XP
+          </option>
+        ))}
+      </Select>
+      <Select
+        value={recommendedAttribute}
+        onChange={(e) => setRecommendedAttribute(e.target.value as StatKey | '')}
+      >
+        <option value="">— No recommended attribute —</option>
+        {STAT_KEYS.map((k) => (
+          <option key={k} value={k}>
+            {STAT_LABELS[k]}
           </option>
         ))}
       </Select>
@@ -183,6 +198,11 @@ function AdminQuestCard({
         <div className="min-w-0">
           <p className="font-display text-parchment-100">{quest.title}</p>
           <p className="text-sm text-parchment-300">{quest.description}</p>
+          {quest.recommendedAttribute && (
+            <p className="mt-1 text-xs text-gold-300">
+              🎯 Best with {STAT_LABELS[quest.recommendedAttribute]}
+            </p>
+          )}
         </div>
         <Badge>{quest.xpReward} XP</Badge>
       </div>

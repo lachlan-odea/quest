@@ -101,6 +101,7 @@ async function main() {
       battleCooldownSeconds: 30,
       xpPerLevel: 300,
       battlesNeedApproval: false,
+      divineFavourMode: 'winnerOnly',
     },
     createdAt: now,
     updatedAt: now,
@@ -131,14 +132,35 @@ async function main() {
   const playerIds: string[] = [];
   for (let i = 0; i < DEMO_NAMES.length; i++) {
     const stats = {
-      strength: randStat(),
-      charisma: randStat(),
-      constitution: randStat(),
-      wisdom: randStat(),
-      dexterity: randStat(),
-      luck: randStat(),
+      stamina: randStat(),
+      rizz: randStat(),
+      shenanigans: randStat(),
+      vibes: randStat(),
     };
     const teamId = teamIds[i % teamIds.length];
+    // Give the groom (player 0) an example title + active effect to show off
+    // the Divine Favour system; everyone else starts clean.
+    const exampleEffects =
+      i === 0
+        ? [
+            {
+              id: `fx_seed_${i}`,
+              source: 'Divine Favour',
+              name: 'Blessing of Apollo',
+              description: '+2 Rizz for your next battle.',
+              effects: [
+                {
+                  type: 'temporaryAttributeModifier',
+                  attribute: 'rizz',
+                  value: 2,
+                  until: 'nextBattle',
+                  description: '+2 Rizz for your next battle.',
+                },
+              ],
+              createdAt: now,
+            },
+          ]
+        : [];
     const ref = await addDoc(collection(db, 'players'), {
       eventId,
       authUid: `seed-${i}`,
@@ -153,6 +175,9 @@ async function main() {
       inventory: [],
       activeBuffs: [],
       activeDebuffs: [],
+      activeEffects: exampleEffects,
+      titles: i === 0 ? ['Blessed of the Groom'] : [],
+      divineFavourRollIds: [],
       assignedQuestIds: [],
       completedQuestIds: [],
       upgradeIds: [],
@@ -163,6 +188,44 @@ async function main() {
     playerIds.push(ref.id);
   }
   console.log(`Created ${playerIds.length} mock players.`);
+
+  // Example Divine Favour roll history (so the history screens aren't empty).
+  {
+    const batch = writeBatch(db);
+    const examples = [
+      {
+        playerId: playerIds[0],
+        roll: 19,
+        resultName: 'Blessing of Apollo',
+        resultDescription: 'The sun god lends you his charm.',
+        triggeredGroomsBlessing: false,
+      },
+      {
+        playerId: playerIds[1 % playerIds.length],
+        roll: 8,
+        resultName: 'Burden of Olympus',
+        resultDescription: 'The weight of the gods presses on your next contest.',
+        triggeredGroomsBlessing: false,
+      },
+      {
+        playerId: playerIds[2 % playerIds.length],
+        roll: 11,
+        resultName: 'Fortune Smiles',
+        resultDescription: 'A little luck lands in your lap.',
+        triggeredGroomsBlessing: false,
+      },
+    ];
+    examples.forEach((ex, idx) => {
+      batch.set(doc(collection(db, 'divineFavourRolls')), {
+        eventId,
+        ...ex,
+        effectsApplied: [],
+        createdAt: now - (idx + 1) * 60_000,
+      });
+    });
+    await batch.commit();
+  }
+  console.log('Created example Divine Favour roll history.');
 
   // Quests (assign first few to players)
   for (let i = 0; i < QUEST_TEMPLATES.length; i++) {
@@ -175,6 +238,7 @@ async function main() {
       title: qt.title,
       description: qt.description,
       difficulty: qt.difficulty,
+      recommendedAttribute: qt.recommendedAttribute ?? null,
       xpReward: QUEST_XP[qt.difficulty],
       status: assignedPlayerId ? 'assigned' : 'unassigned',
       hiddenFromOthers: true,

@@ -102,6 +102,16 @@ async function main() {
       xpPerLevel: 300,
       battlesNeedApproval: false,
       divineFavourMode: 'winnerOnly',
+      battleSettings: {
+        victoryXp: 50,
+        gloryXp: 100,
+        statRollFallbackXp: 25,
+        triggerDivineFavourForStatWinner: true,
+        allowPlayerIssuedChallenges: true,
+        requireAdminApproval: false,
+        cooldownMinutesBetweenBattles: 15,
+        allowDecline: true,
+      },
     },
     createdAt: now,
     updatedAt: now,
@@ -226,6 +236,99 @@ async function main() {
     await batch.commit();
   }
   console.log('Created example Divine Favour roll history.');
+
+  // Example completed battles (so history isn't empty) — covers a normal
+  // victory with a different stat-roll winner, a Glory win, and a battle where
+  // a debuff (Burden of Olympus, -2) dragged a roll down.
+  {
+    const roll = (
+      playerId: string,
+      attribute: string,
+      d20: number,
+      mod: number,
+      activeMod = 0,
+    ) => ({
+      playerId,
+      attribute,
+      d20,
+      attributeValue: 10 + mod * 2,
+      attributeModifier: mod,
+      activeModifier: activeMod,
+      total: d20 + mod + activeMod,
+      naturalRoll: d20,
+    });
+    const challenge = (attribute: string, title: string, instructions: string) => ({
+      id: `chal_seed_${title.replace(/\s+/g, '').toLowerCase()}`,
+      attribute,
+      title,
+      description: '',
+      instructions,
+      suggestedDurationMinutes: 2,
+      requiresJudge: true,
+    });
+    const base = (i: number, cId: string, dId: string, category: string) => ({
+      eventId,
+      challengerId: cId,
+      defenderId: dId,
+      challengerName: DEMO_NAMES[playerIds.indexOf(cId)] ?? 'Challenger',
+      defenderName: DEMO_NAMES[playerIds.indexOf(dId)] ?? 'Defender',
+      category,
+      status: 'completed' as const,
+      judgeMode: 'admin' as const,
+      createdAt: now - (i + 1) * 5 * 60_000,
+      completedAt: now - (i + 1) * 5 * 60_000 + 120_000,
+    });
+
+    const p = (i: number) => playerIds[i % playerIds.length];
+    const batch = writeBatch(db);
+
+    // 1) Normal victory — real-world winner p0, but the gods favoured p1.
+    batch.set(doc(collection(db, 'battles')), {
+      ...base(0, p(0), p(1), 'rizz'),
+      challenge: challenge('rizz', 'Toast to the Groom', 'Each player delivers a toast. Best one wins.'),
+      challengerRoll: roll(p(0), 'rizz', 12, 1),
+      defenderRoll: roll(p(1), 'rizz', 18, 0),
+      realWorldWinnerId: p(0),
+      realWorldLoserId: p(1),
+      statRollWinnerId: p(1),
+      statRollLoserId: p(0),
+      victoryXpAwarded: 50,
+      divineFavourTriggeredForPlayerId: p(1),
+    });
+
+    // 2) Glory — p2 won the game AND the stat roll.
+    batch.set(doc(collection(db, 'battles')), {
+      ...base(1, p(2), p(3), 'shenanigans'),
+      challenge: challenge('shenanigans', 'Invent & Pitch a Product', 'Pitch a ridiculous product. Best pitch wins.'),
+      challengerRoll: roll(p(2), 'shenanigans', 17, 2),
+      defenderRoll: roll(p(3), 'shenanigans', 9, 1),
+      realWorldWinnerId: p(2),
+      realWorldLoserId: p(3),
+      statRollWinnerId: p(2),
+      statRollLoserId: p(3),
+      gloryWinnerId: p(2),
+      gloryXpAwarded: 100,
+      divineFavourTriggeredForPlayerId: p(2),
+    });
+
+    // 3) Debuff at work — p4's roll carries Burden of Olympus (-2).
+    batch.set(doc(collection(db, 'battles')), {
+      ...base(2, p(4), p(0), 'stamina'),
+      challenge: challenge('stamina', 'Plank Challenge', 'Hold a plank. Last one up wins.'),
+      challengerRoll: roll(p(4), 'stamina', 14, 1, -2),
+      defenderRoll: roll(p(0), 'stamina', 11, 0),
+      realWorldWinnerId: p(0),
+      realWorldLoserId: p(4),
+      statRollWinnerId: p(0),
+      statRollLoserId: p(4),
+      gloryWinnerId: p(0),
+      gloryXpAwarded: 100,
+      statRollXpAwarded: 25,
+    });
+
+    await batch.commit();
+  }
+  console.log('Created example battles.');
 
   // Quests (assign first few to players)
   for (let i = 0; i < QUEST_TEMPLATES.length; i++) {

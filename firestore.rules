@@ -128,15 +128,29 @@ service cloud.firestore {
     }
 
     // ---- battles ----------------------------------------------------------
+    // Hybrid party-game + stat-roll battles. The real-world winner is recorded
+    // by a judge/admin; each player rolls their own stat; completion applies XP
+    // and Divine Favour.
+    //
+    // MVP LIMITATION (see README "Hardening"): battle completion runs on a
+    // participant's client (submitting the second roll finalises the battle and
+    // writes realWorldWinnerId/XP/glory/divineFavour fields). So participants
+    // are allowed to update those fields here. To enforce the intended rules —
+    // "players may only accept/decline and submit their own roll once, and may
+    // NOT set realWorldWinnerId / *XpAwarded / gloryWinnerId /
+    // divineFavourTriggeredForPlayerId" — move recordRealWorldWinner +
+    // completeBattle into a Cloud Function and restrict client updates to
+    // status (accept/decline) and the caller's own *Roll field via
+    // request.resource.data.diff(resource.data).affectedKeys().
     match /battles/{battleId} {
       allow read: if isSignedIn();
 
-      // A player may create a battle they are part of; admins can create any.
+      // A player may create a battle ONLY as the challenger; admins create any.
       allow create: if isEventAdmin(request.resource.data.eventId)
         || (isSignedIn()
             && ownsPlayer(request.resource.data.challengerId));
 
-      // Either participant or an admin may update/resolve a battle.
+      // Either participant or an admin may update/resolve a battle (MVP).
       allow update: if isEventAdmin(resource.data.eventId)
         || ownsPlayer(resource.data.challengerId)
         || ownsPlayer(resource.data.defenderId);

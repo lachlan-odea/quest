@@ -20,7 +20,18 @@ export type QuestDifficulty = 'easy' | 'medium' | 'hard' | 'legendary';
 
 export type QuestStatus = 'unassigned' | 'assigned' | 'completed' | 'failed';
 
-export type BattleStatus = 'pending' | 'completed' | 'cancelled';
+export type BattleStatus =
+  | 'pending' // challenge issued, awaiting the defender
+  | 'accepted' // defender accepted
+  | 'declined' // defender declined (terminal)
+  | 'inProgress' // the real-world party challenge is happening
+  | 'awaitingJudge' // waiting on the judge to record the real-world winner
+  | 'awaitingRolls' // real-world winner recorded, waiting for stat rolls
+  | 'completed' // rewards applied and battle saved
+  | 'cancelled';
+
+/** Who decides the real-world winner of a battle. */
+export type BattleJudgeMode = 'admin' | 'groom' | 'selectedPlayer' | 'groupVote';
 
 export type UpgradeType =
   | 'statBoost'
@@ -202,6 +213,28 @@ export interface EventSettings {
   battlesNeedApproval: boolean;
   /** Who may roll on the Table of Divine Favour after a battle. */
   divineFavourMode: DivineFavourMode;
+  /** Hybrid party-game battle tuning. */
+  battleSettings: BattleSettings;
+}
+
+/** Tuning for the hybrid (party-game + stat-roll) battle system. */
+export interface BattleSettings {
+  /** XP for winning the real-world party challenge. */
+  victoryXp: number;
+  /** XP for winning BOTH the real-world challenge and the stat roll (Glory). */
+  gloryXp: number;
+  /** XP for the stat-roll winner when Divine Favour is not triggered. */
+  statRollFallbackXp: number;
+  /** Trigger a Divine Favour roll for the stat-roll winner on completion. */
+  triggerDivineFavourForStatWinner: boolean;
+  /** Whether players may issue their own challenges (else admin-only). */
+  allowPlayerIssuedChallenges: boolean;
+  /** Whether player-issued challenges need admin approval first (MVP: advisory). */
+  requireAdminApproval: boolean;
+  /** Minutes a player must wait between issuing battles (anti-spam). */
+  cooldownMinutesBetweenBattles: number;
+  /** Whether a defender may decline a challenge. */
+  allowDecline: boolean;
 }
 
 // -----------------------------------------------------------------------------
@@ -288,25 +321,77 @@ export interface Quest {
   updatedAt: number;
 }
 
+/** A single party-game challenge drawn from the challenge bank. */
+export interface BattleChallenge {
+  id: string;
+  attribute: AttributeKey;
+  title: string;
+  description: string;
+  instructions: string;
+  suggestedDurationMinutes?: number;
+  requiresJudge: boolean;
+}
+
+/** One player's stat roll within a battle. */
+export interface BattleRoll {
+  playerId: string;
+  attribute: AttributeKey;
+  d20: number;
+  attributeValue: number;
+  attributeModifier: number;
+  activeModifier: number;
+  total: number;
+  /** The raw d20 (same as d20; kept for clarity/nat-20 checks). */
+  naturalRoll: number;
+  /** True if the player held an "auto-win next stat roll" blessing. */
+  usedAutoWin?: boolean;
+}
+
+/**
+ * A hybrid battle: the real-world party challenge decides the official winner;
+ * the stat roll decides who the gods favour (Divine Favour); winning both is
+ * "Glory". Timestamps are epoch ms to match the rest of the app.
+ */
 export interface Battle {
   id: string;
   eventId: string;
+
   challengerId: string;
   defenderId: string;
+  /** Denormalised names so history/leaderboard need no extra lookups. */
   challengerName: string;
   defenderName: string;
-  challengerStat: StatKey;
-  defenderStat: StatKey | null;
-  challengerRoll: number | null;
-  defenderRoll: number | null;
-  challengerTotal: number | null;
-  defenderTotal: number | null;
-  winnerId: string | null;
-  loserId: string | null;
-  xpReward: number;
+
+  category: AttributeKey;
+  challenge: BattleChallenge;
+
   status: BattleStatus;
+
+  judgeMode: BattleJudgeMode;
+  judgePlayerId?: string;
+
+  realWorldWinnerId?: string;
+  realWorldLoserId?: string;
+
+  challengerRoll?: BattleRoll;
+  defenderRoll?: BattleRoll;
+
+  statRollWinnerId?: string;
+  statRollLoserId?: string;
+
+  gloryWinnerId?: string;
+
+  victoryXpAwarded?: number;
+  gloryXpAwarded?: number;
+  statRollXpAwarded?: number;
+
+  divineFavourTriggeredForPlayerId?: string;
+  divineFavourRollId?: string;
+
   createdAt: number;
+  acceptedAt?: number;
   completedAt?: number;
+  cancelledAt?: number;
 }
 
 export interface Upgrade {

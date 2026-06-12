@@ -18,7 +18,9 @@ Built with **React + TypeScript + Vite + Tailwind CSS** and **Firebase**
 - Roll a character sheet (4d6 drop lowest) with a dice animation — once only
 - View their four attributes & modifiers, buffs/debuffs, inventory and titles
 - See **only their own** hidden quests; submit proof notes
-- Challenge other players to dice battles; win XP, losers get funny debuffs
+- Challenge other players to **hybrid battles**: do a real-world party game,
+  a judge picks the winner, then both roll stats — win for Victory, Divine
+  Favour, or both (Glory)
 - Roll on the **Table of Divine Favour** (d20 of punishments & blessings) with
   an animated reveal — including the legendary double-20 **Groom's Blessing**
 - Spend XP in the upgrade shop (stat boosts, perks, titles, debuff cleanses)
@@ -123,6 +125,8 @@ src/
 │   ├── dice.ts        # 4d6-drop-lowest, modifiers, d20 battle rolls
 │   ├── classes.ts     # Funny fantasy character classes
 │   ├── divineFavour.ts# d20 Table of Divine Favour + Groom's Blessing
+│   ├── battleChallenges.ts # Real-world party-game challenge bank
+│   ├── battleUtils.ts # Pure battle maths (modifiers, rolls, winners, effects)
 │   ├── seedData.ts    # Quest / upgrade / team / debuff templates
 │   └── utils.ts       # cn(), join codes, level maths, time-ago, shuffle…
 ├── services/          # One file per collection — all Firestore access
@@ -172,14 +176,6 @@ modifier = `floor((score - 10) / 2)`):
 
 - **Attributes:** `4d6 drop lowest` per attribute; modifier =
   `floor((score - 10) / 2)`. You only roll once (unless an admin resets you).
-- **Battles:** the challenger picks one of **Stamina / Rizz / Shenanigans /
-  Vibes**; each side rolls `d20 + attribute modifier`; higher total wins (ties
-  go to the defender). Winner earns XP; loser gets a random temporary debuff.
-  A per-player cooldown (`battleCooldownSeconds`) prevents spam. Examples:
-  - **Battle of Stamina** — an endurance or resistance challenge.
-  - **Battle of Rizz** — a social challenge, toast, persuasion or speech.
-  - **Battle of Shenanigans** — creative problem solving, scheming or a secret objective.
-  - **Battle of Vibes** — chaos, luck or a wildcard challenge.
 - **XP & levels:** `level = floor(xp / xpPerLevel) + 1`. Available XP =
   `xp - spentXp`.
 - **Quests:** difficulty → XP reward; admin marks complete to award it. Quests
@@ -235,6 +231,58 @@ auto-trigger a roll.)
 
 ---
 
+## 🥊 Battles (hybrid party-game + stat roll)
+
+Battles blend a **real-world party game** with an **RPG stat roll**. The party
+game decides the official winner; the stat roll decides who the gods favour.
+
+**On the night, it's five steps:**
+
+1. **Do the party game** — the app shows a challenge for the chosen category.
+2. **The judge picks the real-world winner** (admin, the Groom, a chosen judge,
+   or a group vote — set when issuing the challenge).
+3. **Both players roll** `d20 + attribute modifier + active modifiers`.
+4. **The gods interfere** — the stat-roll winner gets a Divine Favour roll.
+5. **XP & Glory are awarded** automatically and saved to history.
+
+**Three outcome layers:**
+
+- **Victory** — the real-world winner is the *official* battle winner and earns
+  `victoryXp` (default **50**).
+- **Divine Favour** — the *stat-roll* winner is favoured by the gods: a Divine
+  Favour roll (if enabled) or a small `statRollFallbackXp` (default **25**).
+- **Glory** — win **both** and you get `gloryXp` (default **100**, *instead of*
+  the 50 — not stacked), the activity line *"X achieved Glory in a Battle of
+  [Attribute]!"*, and the **Glory-Seeker** title.
+
+**Categories & challenges.** Each battle has a category — **Stamina, Rizz,
+Shenanigans, or Vibes** — and draws a real-world challenge from a bank of 8+ per
+category (plank holds, best toast, invent-a-product, dance-offs, …). Reroll for
+a different one when issuing.
+
+**Attribute roll formula.** `modifier = Math.floor((attributeValue - 10) / 2)`
+(8 → −1, 10 → 0, 14 → +2, 18 → +4). The stat roll is
+`d20 + attributeModifier + activeModifiers`.
+
+**Active effects modify battles.** Divine Favour and debuffs feed straight in:
+`+N attribute for next battle` raises the modifier; `battleRollModifier` (e.g.
+Burden of Olympus −2) adjusts the d20 total; **auto-win** wins the stat roll
+outright (unless both players have it); the **Cyclops' Curse** forces the
+player's *lowest* attribute; **Minotaur's Maze** blocks challenging; the **Curse
+of Dionysus** forbids declining. Effects flagged `until: 'nextBattle'` are
+consumed once the battle completes.
+
+**Statuses:** `pending → accepted/inProgress → awaitingRolls → completed`
+(or `declined` / `cancelled`).
+
+**Admin battle controls** (Admin → Battles): create a battle manually, record or
+**override** the real-world winner, **force** both stat rolls, **complete**,
+cancel, delete, and trigger Divine Favour for either combatant. Battle tuning
+(`victoryXp`, `gloryXp`, `statRollFallbackXp`, Divine-Favour-for-stat-winner,
+player-issued challenges, decline, cooldown) lives in Admin → Settings.
+
+---
+
 ## 🔐 Security rules & limitations (read this!)
 
 The included [`firestore.rules`](firestore.rules) implement an **MVP-friendly**
@@ -270,6 +318,13 @@ model:
    Function** (the service is structured so callers wouldn't change — swap the
    client writes for a callable), make the rolls collection owner/admin-read
    only, and query a player's history by `playerId`.
+5. **Battle completion runs on a participant's client.** Submitting the second
+   stat roll finalises the battle — writing `realWorldWinnerId`/XP/`gloryWinnerId`
+   and triggering Divine Favour — so the rules currently let either participant
+   update those fields. **Harden:** move `recordRealWorldWinner` + `completeBattle`
+   into a **Cloud Function** (`battleUtils.ts` is pure and `battleService.ts` is
+   id-keyed precisely so this lift is mechanical), then restrict client battle
+   updates to `status` (accept/decline) and the caller's own `*Roll` field.
 
 These trade-offs are intentional for a one-weekend party MVP — the comments in
 `firestore.rules` point at each one.

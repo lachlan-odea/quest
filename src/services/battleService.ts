@@ -1,15 +1,29 @@
 /**
- * Battle service — challenge another player, roll d20 + stat modifier, resolve
- * a winner, award XP and hand the loser a funny debuff.
+ * Battle service — the hybrid party-game + stat-roll battle system.
  *
- * Anti-spam guardrail: a player must wait `battleCooldownSeconds` between
- * starting battles (tracked via player.lastBattleAt).
+ * Lifecycle:
+ *   pending → accepted/inProgress → awaitingRolls (real-world winner recorded)
+ *           → completed
+ *   (or declined / cancelled)
+ *
+ * Design principle: the REAL-WORLD party game decides the official winner
+ * (Victory XP). The STAT ROLL decides who the gods favour (Divine Favour /
+ * bonus). Winning BOTH is "Glory". The judge records the real-world winner;
+ * each player rolls their own d20 + attribute modifier.
+ *
+ * MVP / hardening note: like XP and Divine Favour, battle completion runs
+ * client-side for a fast, offline-tolerant party game (trust-based). Every
+ * function is keyed by ids and loads fresh docs, so the whole completion step
+ * can be lifted into a Firebase Cloud Function later without changing callers.
+ * See README "Hardening".
  */
 
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
+  getDoc,
   onSnapshot,
   query,
   updateDoc,
@@ -17,272 +31,400 @@ import {
 } from 'firebase/firestore';
 import { db, COLLECTIONS } from '@/lib/firebase';
 import type {
-  ActiveEffect,
+  AttributeKey,
   Battle,
-  EventSettings,
+  BattleChallenge,
+  BattleJudgeMode,
   Player,
-  StatBlock,
-  StatKey,
 } from '@/types';
-import { battleRoll } from '@/lib/dice';
-import { awardXp, addDebuff } from './playerService';
-import { randomDebuff } from '@/lib/seedData';
+import {
+  calculateBattleRoll,
+  canPlayerChallenge,
+  canPlayerDeclineChallenge,
+  consumeBattleEffects,
+  determineGloryWinner,
+  determineStatRollWinner,
+} from '@/lib/battleUtils';
+import { getRandomBattleChallenge } from '@/lib/battleChallenges';
+import { STAT_LABELS } from '@/lib/dice';
+import { awardXp } from './playerService';
+import { getEvent } from './eventService';
+import { rollDivineFavour } from './divineFavourService';
 import { logActivity } from './activityService';
 
 const battlesCol = collection(db, COLLECTIONS.battles);
 
-const effectsOf = (player: Player): ActiveEffect[] => player.activeEffects ?? [];
+// ---- Loaders ----------------------------------------------------------------
 
-/**
- * Effective stat value = base stat + active buff/debuff deltas + any Divine
- * Favour `temporaryAttributeModifier`s for this attribute.
- */
-export function effectiveStat(player: Player, stat: StatKey): number {
-  const buffDelta = [...player.activeBuffs, ...player.activeDebuffs].reduce(
-    (sum, e) => sum + (e.statDelta?.[stat] ?? 0),
-    0,
-  );
-  const fxDelta = effectsOf(player).reduce(
-    (sum, ae) =>
-      sum +
-      ae.effects.reduce(
-        (s, e) =>
-          s +
-          (e.type === 'temporaryAttributeModifier' && e.attribute === stat
-            ? e.value ?? 0
-            : 0),
-        0,
-      ),
-    0,
-  );
-  return player.stats[stat] + buffDelta + fxDelta;
+async function loadBattle(battleId: string): Promise<Battle | null> {
+  const snap = await getDoc(doc(db, COLLECTIONS.battles, battleId));
+  return snap.exists() ? ({ id: snap.id, ...snap.data() } as Battle) : null;
 }
 
-/** Flat d20 modifier from Divine Favour `battleRollModifier` effects. */
-export function battleRollBonus(player: Player): number {
-  return effectsOf(player).reduce(
-    (sum, ae) =>
-      sum +
-      ae.effects.reduce(
-        (s, e) => s + (e.type === 'battleRollModifier' ? e.value ?? 0 : 0),
-        0,
-      ),
-    0,
-  );
+async function loadPlayer(playerId: string): Promise<Player | null> {
+  const snap = await getDoc(doc(db, COLLECTIONS.players, playerId));
+  return snap.exists() ? ({ id: snap.id, ...snap.data() } as Player) : null;
 }
 
-/** Does the player hold an "auto-win next stat roll" blessing? */
-export function hasAutoWin(player: Player): boolean {
-  return effectsOf(player).some((ae) =>
-    ae.effects.some((e) => e.type === 'autoWinNextStatRoll'),
-  );
-}
-
-/** Is the player blocked from challenging (e.g. Minotaur's Maze)? */
-export function hasChallengeRestriction(player: Player): boolean {
-  return effectsOf(player).some((ae) =>
-    ae.effects.some((e) => e.type === 'challengeRestriction'),
-  );
-}
-
-/** Active effects remaining after consuming any "until next battle" ones. */
-function consumeNextBattle(player: Player): ActiveEffect[] {
-  return effectsOf(player).filter(
-    (ae) => !ae.effects.some((e) => e.until === 'nextBattle'),
-  );
-}
-
-/** Write back a player's active effects if a battle consumed any. */
-async function persistConsumed(player: Player): Promise<void> {
-  const remaining = consumeNextBattle(player);
-  if (remaining.length !== effectsOf(player).length) {
-    await updateDoc(doc(db, COLLECTIONS.players, player.id), {
-      activeEffects: remaining,
-      updatedAt: Date.now(),
-    });
-  }
-}
+// ---- Cooldown ---------------------------------------------------------------
 
 /** How long until this player can battle again (ms). 0 = ready now. */
 export function battleCooldownRemaining(
   player: Player,
-  cooldownSeconds: number,
+  cooldownMinutes: number,
   now = Date.now(),
 ): number {
   if (!player.lastBattleAt) return 0;
-  const ready = player.lastBattleAt + cooldownSeconds * 1000;
+  const ready = player.lastBattleAt + cooldownMinutes * 60_000;
   return Math.max(0, ready - now);
 }
 
-export interface ChallengeInput {
-  event: { id: string; settings: EventSettings };
+// ---- Create / accept / decline ---------------------------------------------
+
+export interface CreateBattleInput {
+  eventId: string;
   challenger: Player;
   defender: Player;
-  challengerStat: StatKey;
+  category: AttributeKey;
+  judgeMode?: BattleJudgeMode;
+  judgePlayerId?: string;
+  /** Provide a specific challenge, else a random one is drawn for the category. */
+  challenge?: BattleChallenge;
+  /** Admin-created battles bypass cooldown / player-issue restrictions. */
+  byAdmin?: boolean;
 }
 
-/** Create a pending battle. Throws if the challenger is on cooldown. */
-export async function createChallenge(input: ChallengeInput): Promise<Battle> {
-  const { event, challenger, defender, challengerStat } = input;
+/** Issue a challenge → creates a `pending` battle. */
+export async function createBattle(input: CreateBattleInput): Promise<Battle> {
+  const { eventId, challenger, defender, category } = input;
+  const event = await getEvent(eventId);
+  if (!event) throw new Error('Event not found.');
+  const bs = event.settings.battleSettings;
 
-  const remaining = battleCooldownRemaining(
-    challenger,
-    event.settings.battleCooldownSeconds,
-  );
-  if (remaining > 0) {
-    throw new Error(
-      `On cooldown — wait ${Math.ceil(remaining / 1000)}s before challenging again.`,
-    );
-  }
   if (challenger.id === defender.id) {
     throw new Error('You cannot challenge yourself.');
   }
-  if (hasChallengeRestriction(challenger)) {
-    throw new Error(
-      'A curse blocks you from challenging anyone until you complete a quest.',
+  if (!defender.hasRolled) {
+    throw new Error(`${defender.name} hasn't rolled a character sheet yet.`);
+  }
+
+  if (!input.byAdmin) {
+    if (bs && !bs.allowPlayerIssuedChallenges) {
+      throw new Error('Only the Game Master can start battles right now.');
+    }
+    const check = canPlayerChallenge(challenger);
+    if (!check.ok) throw new Error(check.reason ?? 'You cannot challenge now.');
+    const remaining = battleCooldownRemaining(
+      challenger,
+      bs?.cooldownMinutesBetweenBattles ?? 0,
     );
+    if (remaining > 0) {
+      throw new Error(
+        `On cooldown — wait ${Math.ceil(remaining / 60_000)} min before challenging again.`,
+      );
+    }
   }
 
   const now = Date.now();
+  const challenge = input.challenge ?? getRandomBattleChallenge(category);
   const data: Omit<Battle, 'id'> = {
-    eventId: event.id,
+    eventId,
     challengerId: challenger.id,
     defenderId: defender.id,
     challengerName: challenger.name,
     defenderName: defender.name,
-    challengerStat,
-    defenderStat: null,
-    challengerRoll: null,
-    defenderRoll: null,
-    challengerTotal: null,
-    defenderTotal: null,
-    winnerId: null,
-    loserId: null,
-    xpReward: event.settings.battleXpReward,
+    category,
+    challenge,
     status: 'pending',
+    judgeMode: input.judgeMode ?? 'admin',
+    ...(input.judgePlayerId ? { judgePlayerId: input.judgePlayerId } : {}),
     createdAt: now,
   };
   const ref = await addDoc(battlesCol, data);
 
-  // Record cooldown start on the challenger.
-  await updateDoc(doc(db, COLLECTIONS.players, challenger.id), {
-    lastBattleAt: now,
-    updatedAt: now,
-  });
+  // Player-issued challenges start the cooldown.
+  if (!input.byAdmin) {
+    await updateDoc(doc(db, COLLECTIONS.players, challenger.id), {
+      lastBattleAt: now,
+      updatedAt: now,
+    });
+  }
 
   await logActivity(
-    event.id,
+    eventId,
     'battle',
-    `${challenger.name} challenged ${defender.name} to a duel of ${challengerStat}! ⚔️`,
+    `${challenger.name} challenged ${defender.name} to a Battle of ${STAT_LABELS[category]} — "${challenge.title}"! ⚔️`,
     challenger.id,
   );
   return { id: ref.id, ...data };
 }
 
-/**
- * Resolve a pending battle: roll for both sides, pick a winner, award XP, and
- * curse the loser with a temporary debuff.
- */
-export async function resolveBattle(
-  battle: Battle,
-  challenger: Player,
-  defender: Player,
-  defenderStat: StatKey,
-  settings: EventSettings,
-): Promise<Battle> {
-  const cRoll = battleRoll(effectiveStat(challenger, battle.challengerStat));
-  const dRoll = battleRoll(effectiveStat(defender, defenderStat));
-
-  // Divine Favour flat roll modifiers (e.g. Burden of Olympus -2).
-  const cTotal = cRoll.total + battleRollBonus(challenger);
-  const dTotal = dRoll.total + battleRollBonus(defender);
-
-  // Auto-win blessings trump the dice; if both hold one, fall back to the roll.
-  const cAuto = hasAutoWin(challenger);
-  const dAuto = hasAutoWin(defender);
-  let challengerWins: boolean;
-  if (cAuto && !dAuto) challengerWins = true;
-  else if (dAuto && !cAuto) challengerWins = false;
-  // Ties broken in favour of the defender (you must beat them to win).
-  else challengerWins = cTotal > dTotal;
-
-  const winner = challengerWins ? challenger : defender;
-  const loser = challengerWins ? defender : challenger;
-
-  const completedAt = Date.now();
-  const patch = {
-    defenderStat,
-    challengerRoll: cRoll.roll,
-    defenderRoll: dRoll.roll,
-    challengerTotal: cTotal,
-    defenderTotal: dTotal,
-    winnerId: winner.id,
-    loserId: loser.id,
-    status: 'completed' as const,
-    completedAt,
-  };
-  await updateDoc(doc(db, COLLECTIONS.battles, battle.id), patch);
-
-  // Award XP to the winner and debuff the loser.
-  await awardXp(
-    winner,
-    battle.xpReward,
-    settings.xpPerLevel,
-    `won a battle vs ${loser.name}`,
-  );
-  await addDebuff(loser, randomDebuff());
-
-  // Consume any "until next battle" Divine Favour effects on both sides.
-  await persistConsumed(challenger);
-  await persistConsumed(defender);
-
+/** Defender accepts → `inProgress` (go do the party game). */
+export async function acceptBattle(battleId: string): Promise<void> {
+  const battle = await loadBattle(battleId);
+  if (!battle) throw new Error('Battle not found.');
+  await updateDoc(doc(db, COLLECTIONS.battles, battleId), {
+    status: 'inProgress',
+    acceptedAt: Date.now(),
+  });
   await logActivity(
     battle.eventId,
     'battle',
-    `${winner.name} defeated ${loser.name} (${cRoll.total} vs ${dRoll.total})! 🏆`,
-    winner.id,
+    `${battle.defenderName} accepted ${battle.challengerName}'s challenge! The "${battle.challenge.title}" begins. 🥊`,
   );
-
-  return { ...battle, ...patch };
 }
 
+/** Defender declines → `declined`. Blocked if cursed to accept / decline off. */
+export async function declineBattle(battleId: string): Promise<void> {
+  const battle = await loadBattle(battleId);
+  if (!battle) throw new Error('Battle not found.');
+  const event = await getEvent(battle.eventId);
+  const bs = event?.settings.battleSettings;
+  if (bs && !bs.allowDecline) {
+    throw new Error('Declining challenges is disabled for this event.');
+  }
+  const defender = await loadPlayer(battle.defenderId);
+  if (defender && !canPlayerDeclineChallenge(defender)) {
+    throw new Error('The Curse of Dionysus forces you to accept this challenge!');
+  }
+  await updateDoc(doc(db, COLLECTIONS.battles, battleId), {
+    status: 'declined',
+    cancelledAt: Date.now(),
+  });
+  await logActivity(
+    battle.eventId,
+    'battle',
+    `${battle.defenderName} declined ${battle.challengerName}'s challenge. 🐔`,
+  );
+}
+
+// ---- Judging ----------------------------------------------------------------
+
 /**
- * Decline a challenge — and face the consequences. The challenger wins by
- * forfeit (gets the XP) and the chicken who declined cops a random debuff.
+ * Record the real-world winner of the party game → `awaitingRolls`.
+ * If both stat rolls are already in, the battle completes immediately.
  */
-export async function declineBattle(
-  battle: Battle,
-  defender: Player,
-  challenger: Player,
-  settings: EventSettings,
+export async function recordRealWorldWinner(
+  battleId: string,
+  winnerId: string,
 ): Promise<void> {
-  const completedAt = Date.now();
-  await updateDoc(doc(db, COLLECTIONS.battles, battle.id), {
-    winnerId: challenger.id,
-    loserId: defender.id,
-    status: 'completed' as const,
-    completedAt,
+  const battle = await loadBattle(battleId);
+  if (!battle) throw new Error('Battle not found.');
+  if (winnerId !== battle.challengerId && winnerId !== battle.defenderId) {
+    throw new Error('Winner must be one of the two combatants.');
+  }
+  const loserId =
+    winnerId === battle.challengerId ? battle.defenderId : battle.challengerId;
+  await updateDoc(doc(db, COLLECTIONS.battles, battleId), {
+    realWorldWinnerId: winnerId,
+    realWorldLoserId: loserId,
+    status: 'awaitingRolls',
+  });
+  const winnerName =
+    winnerId === battle.challengerId ? battle.challengerName : battle.defenderName;
+  await logActivity(
+    battle.eventId,
+    'battle',
+    `${winnerName} won the real-world "${battle.challenge.title}"! Now for the stat rolls… 🎲`,
+    winnerId,
+  );
+
+  if (battle.challengerRoll && battle.defenderRoll) {
+    await completeBattle(battleId);
+  }
+}
+
+// ---- Stat rolls -------------------------------------------------------------
+
+/**
+ * Submit a player's stat roll (d20 + attribute modifier + active modifiers).
+ * Only once per player. Completes the battle once both rolls and the
+ * real-world winner are in.
+ */
+export async function submitBattleRoll(
+  battleId: string,
+  playerId: string,
+): Promise<void> {
+  const battle = await loadBattle(battleId);
+  if (!battle) throw new Error('Battle not found.');
+  const isChallenger = playerId === battle.challengerId;
+  const isDefender = playerId === battle.defenderId;
+  if (!isChallenger && !isDefender) {
+    throw new Error('Only the two combatants may roll.');
+  }
+  if (isChallenger && battle.challengerRoll) throw new Error('You already rolled.');
+  if (isDefender && battle.defenderRoll) throw new Error('You already rolled.');
+
+  const player = await loadPlayer(playerId);
+  if (!player) throw new Error('Player not found.');
+
+  const roll = calculateBattleRoll(player, battle.category);
+  await updateDoc(doc(db, COLLECTIONS.battles, battleId), {
+    [isChallenger ? 'challengerRoll' : 'defenderRoll']: roll,
   });
 
-  await awardXp(
-    challenger,
-    battle.xpReward,
-    settings.xpPerLevel,
-    `won by forfeit vs ${defender.name}`,
-  );
-  await addDebuff(defender, randomDebuff());
+  // Re-read to see if both rolls + a recorded winner are now present.
+  const updated = await loadBattle(battleId);
+  if (
+    updated?.challengerRoll &&
+    updated.defenderRoll &&
+    updated.realWorldWinnerId &&
+    updated.status !== 'completed'
+  ) {
+    await completeBattle(battleId);
+  }
+}
 
+// ---- Completion -------------------------------------------------------------
+
+/**
+ * Apply all rewards and finalise a battle. Idempotent-guarded: does nothing if
+ * already completed or missing rolls / a real-world winner.
+ */
+export async function completeBattle(battleId: string): Promise<void> {
+  const battle = await loadBattle(battleId);
+  if (!battle) throw new Error('Battle not found.');
+  if (battle.status === 'completed') return;
+  if (!battle.challengerRoll || !battle.defenderRoll) {
+    throw new Error('Both players must roll before completing.');
+  }
+  if (!battle.realWorldWinnerId) {
+    throw new Error('Record the real-world winner before completing.');
+  }
+  const event = await getEvent(battle.eventId);
+  if (!event) throw new Error('Event not found.');
+  const bs = event.settings.battleSettings;
+  const xpPerLevel = event.settings.xpPerLevel;
+
+  // Stat-roll winner (ties favour the real-world victor).
+  const statRollWinnerId =
+    determineStatRollWinner(battle.challengerRoll, battle.defenderRoll) ??
+    battle.realWorldWinnerId;
+  const statRollLoserId =
+    statRollWinnerId === battle.challengerId
+      ? battle.defenderId
+      : battle.challengerId;
+
+  const gloryWinnerId = determineGloryWinner(
+    battle.realWorldWinnerId,
+    statRollWinnerId,
+  );
+
+  const realWorldWinnerName =
+    battle.realWorldWinnerId === battle.challengerId
+      ? battle.challengerName
+      : battle.defenderName;
+
+  // --- Victory / Glory XP to the real-world winner ---
+  const victoryWinner = await loadPlayer(battle.realWorldWinnerId);
+  const victoryAmount = gloryWinnerId ? bs.gloryXp : bs.victoryXp;
+  if (victoryWinner) {
+    await awardXp(
+      victoryWinner,
+      victoryAmount,
+      xpPerLevel,
+      gloryWinnerId
+        ? `Glory in a Battle of ${STAT_LABELS[battle.category]}`
+        : `won the Battle of ${STAT_LABELS[battle.category]}`,
+    );
+  }
+
+  // --- Glory title ---
+  if (gloryWinnerId) {
+    const gloryPlayer =
+      victoryWinner && victoryWinner.id === gloryWinnerId
+        ? victoryWinner
+        : await loadPlayer(gloryWinnerId);
+    if (gloryPlayer && !(gloryPlayer.titles ?? []).includes('Glory-Seeker')) {
+      await updateDoc(doc(db, COLLECTIONS.players, gloryPlayer.id), {
+        titles: [...(gloryPlayer.titles ?? []), 'Glory-Seeker'],
+        updatedAt: Date.now(),
+      });
+    }
+  }
+
+  // --- Stat-roll reward: Divine Favour, or a fallback XP bump ---
+  let divineFavourRollId: string | undefined;
+  let statRollXpAwarded: number | undefined;
+  if (bs.triggerDivineFavourForStatWinner) {
+    try {
+      const outcome = await rollDivineFavour(battle.eventId, statRollWinnerId);
+      divineFavourRollId = outcome.record.id;
+    } catch (e) {
+      console.error('[battle] divine favour roll failed', e);
+    }
+  } else {
+    const statWinner = await loadPlayer(statRollWinnerId);
+    if (statWinner) {
+      await awardXp(
+        statWinner,
+        bs.statRollFallbackXp,
+        xpPerLevel,
+        `favoured by the gods (stat roll) in a Battle of ${STAT_LABELS[battle.category]}`,
+      );
+      statRollXpAwarded = bs.statRollFallbackXp;
+    }
+  }
+
+  // --- Consume "until next battle" effects on both sides ---
+  for (const pid of [battle.challengerId, battle.defenderId]) {
+    const p = await loadPlayer(pid);
+    if (!p) continue;
+    const remaining = consumeBattleEffects(p);
+    if (remaining.length !== (p.activeEffects ?? []).length) {
+      await updateDoc(doc(db, COLLECTIONS.players, pid), {
+        activeEffects: remaining,
+        updatedAt: Date.now(),
+      });
+    }
+  }
+
+  // --- Save the battle ---
+  const patch: Partial<Battle> = {
+    status: 'completed',
+    completedAt: Date.now(),
+    statRollWinnerId,
+    statRollLoserId,
+    ...(gloryWinnerId ? { gloryWinnerId } : {}),
+    ...(gloryWinnerId
+      ? { gloryXpAwarded: victoryAmount }
+      : { victoryXpAwarded: victoryAmount }),
+    ...(statRollXpAwarded != null ? { statRollXpAwarded } : {}),
+    ...(divineFavourRollId
+      ? { divineFavourTriggeredForPlayerId: statRollWinnerId, divineFavourRollId }
+      : {}),
+  };
+  await updateDoc(doc(db, COLLECTIONS.battles, battleId), patch);
+
+  // --- Activity log ---
   await logActivity(
     battle.eventId,
     'battle',
-    `${defender.name} chickened out of ${challenger.name}'s challenge and was punished! 🐔`,
-    defender.id,
+    `${realWorldWinnerName} won the Battle of ${STAT_LABELS[battle.category]} (+${victoryAmount} XP)! 🏆`,
+    battle.realWorldWinnerId,
   );
+  if (gloryWinnerId) {
+    const gloryName =
+      gloryWinnerId === battle.challengerId
+        ? battle.challengerName
+        : battle.defenderName;
+    await logActivity(
+      battle.eventId,
+      'battle',
+      `${gloryName} achieved Glory in a Battle of ${STAT_LABELS[battle.category]}! 👑⚔️`,
+      gloryWinnerId,
+    );
+  }
 }
 
-export async function cancelBattle(battle: Battle): Promise<void> {
-  await updateDoc(doc(db, COLLECTIONS.battles, battle.id), {
+// ---- Cancel / admin ---------------------------------------------------------
+
+export async function cancelBattle(battleId: string): Promise<void> {
+  const battle = await loadBattle(battleId);
+  if (!battle) return;
+  await updateDoc(doc(db, COLLECTIONS.battles, battleId), {
     status: 'cancelled',
+    cancelledAt: Date.now(),
   });
   await logActivity(
     battle.eventId,
@@ -291,9 +433,37 @@ export async function cancelBattle(battle: Battle): Promise<void> {
   );
 }
 
+export async function deleteBattle(battleId: string): Promise<void> {
+  await deleteDoc(doc(db, COLLECTIONS.battles, battleId));
+}
+
+/** Admin: roll both players' stat rolls at once (when players can't be bothered). */
+export async function adminForceRolls(battleId: string): Promise<void> {
+  const battle = await loadBattle(battleId);
+  if (!battle) throw new Error('Battle not found.');
+  if (!battle.challengerRoll) await submitBattleRoll(battleId, battle.challengerId);
+  if (!battle.defenderRoll) await submitBattleRoll(battleId, battle.defenderId);
+}
+
+/** Admin: trigger a Divine Favour roll for a player and tag it on the battle. */
+export async function adminTriggerDivineFavour(
+  battleId: string,
+  playerId: string,
+): Promise<void> {
+  const battle = await loadBattle(battleId);
+  if (!battle) throw new Error('Battle not found.');
+  const outcome = await rollDivineFavour(battle.eventId, playerId);
+  await updateDoc(doc(db, COLLECTIONS.battles, battleId), {
+    divineFavourTriggeredForPlayerId: playerId,
+    divineFavourRollId: outcome.record.id,
+  });
+}
+
+// ---- Subscriptions ----------------------------------------------------------
+
 /**
- * All battles for an event, most recent first (history + admin).
- * Sorted/capped in memory so no composite index is required.
+ * All battles for an event, most recent first (history + admin). Sorted/capped
+ * in memory so no composite index is required.
  */
 export function subscribeBattles(
   eventId: string,
@@ -304,9 +474,7 @@ export function subscribeBattles(
   return onSnapshot(
     q,
     (snap) => {
-      const battles = snap.docs.map(
-        (d) => ({ id: d.id, ...d.data() }) as Battle,
-      );
+      const battles = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Battle);
       battles.sort((a, b) => b.createdAt - a.createdAt);
       cb(battles.slice(0, max));
     },
@@ -314,7 +482,12 @@ export function subscribeBattles(
   );
 }
 
-/** Convenience: are these stats defined enough to battle? */
-export function hasRolled(stats: StatBlock): boolean {
-  return Object.values(stats).some((v) => v > 0);
+/** Real-time subscription to a single battle document. */
+export function subscribeBattle(
+  battleId: string,
+  cb: (battle: Battle | null) => void,
+): () => void {
+  return onSnapshot(doc(db, COLLECTIONS.battles, battleId), (snap) => {
+    cb(snap.exists() ? ({ id: snap.id, ...snap.data() } as Battle) : null);
+  });
 }

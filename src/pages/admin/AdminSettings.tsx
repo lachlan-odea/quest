@@ -7,7 +7,13 @@ import { useNavigate } from 'react-router-dom';
 import { useEvent } from '@/hooks/useEvent';
 import { useGame } from '@/context/GameContext';
 import { resetGame, updateEventSettings } from '@/services/eventService';
-import type { DivineFavourMode, EventSettings, QuestDifficulty } from '@/types';
+import type {
+  BattleSettings,
+  DivineFavourMode,
+  EventSettings,
+  QuestDifficulty,
+} from '@/types';
+import { DEFAULT_EVENT_SETTINGS } from '@/lib/utils';
 import { Button, Card, Input, Label, SectionTitle, Select, Spinner } from '@/components/ui';
 
 const DIFFICULTIES: QuestDifficulty[] = ['easy', 'medium', 'hard', 'legendary'];
@@ -36,11 +42,22 @@ export default function AdminSettings() {
     return Number.isFinite(n) ? n : fallback;
   }
 
+  const bs: BattleSettings =
+    draft?.battleSettings ?? DEFAULT_EVENT_SETTINGS.battleSettings;
+
+  function setBattle(patch: Partial<BattleSettings>) {
+    if (!draft) return;
+    setDraft({ ...draft, battleSettings: { ...bs, ...patch } });
+  }
+
   async function save() {
     if (!eventId || !draft) return;
     setBusy(true);
     try {
-      await updateEventSettings(eventId, draft);
+      await updateEventSettings(eventId, {
+        ...draft,
+        battleSettings: draft.battleSettings ?? DEFAULT_EVENT_SETTINGS.battleSettings,
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } finally {
@@ -158,6 +175,70 @@ export default function AdminSettings() {
           </p>
         </div>
 
+        <div className="border-t border-gold-600/20 pt-3">
+          <Label>⚔️ Battle rewards & rules</Label>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <p className="mb-1 text-xs text-parchment-300">Victory XP</p>
+              <Input
+                inputMode="numeric"
+                value={bs.victoryXp}
+                onChange={(e) => setBattle({ victoryXp: num(e.target.value, bs.victoryXp) })}
+              />
+            </div>
+            <div>
+              <p className="mb-1 text-xs text-parchment-300">Glory XP</p>
+              <Input
+                inputMode="numeric"
+                value={bs.gloryXp}
+                onChange={(e) => setBattle({ gloryXp: num(e.target.value, bs.gloryXp) })}
+              />
+            </div>
+            <div>
+              <p className="mb-1 text-xs text-parchment-300">Stat-roll fallback XP</p>
+              <Input
+                inputMode="numeric"
+                value={bs.statRollFallbackXp}
+                onChange={(e) =>
+                  setBattle({ statRollFallbackXp: num(e.target.value, bs.statRollFallbackXp) })
+                }
+              />
+            </div>
+            <div>
+              <p className="mb-1 text-xs text-parchment-300">Cooldown (min)</p>
+              <Input
+                inputMode="numeric"
+                value={bs.cooldownMinutesBetweenBattles}
+                onChange={(e) =>
+                  setBattle({
+                    cooldownMinutesBetweenBattles: num(
+                      e.target.value,
+                      bs.cooldownMinutesBetweenBattles,
+                    ),
+                  })
+                }
+              />
+            </div>
+          </div>
+          <div className="mt-2 flex flex-col gap-2">
+            <BoolRow
+              label="Divine Favour for stat-roll winner"
+              value={bs.triggerDivineFavourForStatWinner}
+              onChange={(v) => setBattle({ triggerDivineFavourForStatWinner: v })}
+            />
+            <BoolRow
+              label="Allow player-issued challenges"
+              value={bs.allowPlayerIssuedChallenges}
+              onChange={(v) => setBattle({ allowPlayerIssuedChallenges: v })}
+            />
+            <BoolRow
+              label="Allow declining challenges"
+              value={bs.allowDecline}
+              onChange={(v) => setBattle({ allowDecline: v })}
+            />
+          </div>
+        </div>
+
         <Button fullWidth onClick={save} disabled={busy}>
           {saved ? 'Saved ✓' : 'Save Settings'}
         </Button>
@@ -184,6 +265,31 @@ export default function AdminSettings() {
           🔥 Reset Game
         </Button>
       </Card>
+    </div>
+  );
+}
+
+/** A labelled Yes/No toggle row built on the Select primitive. */
+function BoolRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-sm text-parchment-200">{label}</span>
+      <Select
+        className="w-24 min-h-0 py-2"
+        value={value ? 'yes' : 'no'}
+        onChange={(e) => onChange(e.target.value === 'yes')}
+      >
+        <option value="yes">On</option>
+        <option value="no">Off</option>
+      </Select>
     </div>
   );
 }

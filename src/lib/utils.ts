@@ -41,6 +41,16 @@ export const DEFAULT_EVENT_SETTINGS: EventSettings = {
   xpPerLevel: 300,
   battlesNeedApproval: false,
   divineFavourMode: 'winnerOnly',
+  battleSettings: {
+    victoryXp: 50,
+    gloryXp: 100,
+    statRollFallbackXp: 25,
+    triggerDivineFavourForStatWinner: true,
+    allowPlayerIssuedChallenges: true,
+    requireAdminApproval: false,
+    cooldownMinutesBetweenBattles: 15,
+    allowDecline: true,
+  },
 };
 
 /** Format an epoch-ms timestamp as a short relative string. */
